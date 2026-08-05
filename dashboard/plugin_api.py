@@ -3208,18 +3208,28 @@ def sprint_compile(payload: SprintCompileBody):
 
 
 @router.get("/po/watch")
-def po_watch(board: str = Query("agora"), stale_seconds: int = Query(900, ge=60)):
+def po_watch(board: str = "agora", stale_seconds: int = 900):
     from agora.ops.po_watch import inspect_board
+    from fastapi import Query as _Q  # noqa: F401 — kept for OpenAPI if wrapped later
 
-    return inspect_board(board, stale_seconds=stale_seconds)
+    # FastAPI injects Query defaults when served; direct calls pass plain values.
+    if hasattr(board, "default"):
+        board = getattr(board, "default", "agora") or "agora"
+    if hasattr(stale_seconds, "default"):
+        stale_seconds = int(getattr(stale_seconds, "default", 900) or 900)
+    return inspect_board(str(board), stale_seconds=int(stale_seconds))
 
 
 @router.post("/po/watch/publish")
-def po_watch_publish(board: str = Query("agora"), stale_seconds: int = Query(900, ge=60)):
+def po_watch_publish(board: str = "agora", stale_seconds: int = 900):
     """Inspect board and post to #planejamento only when unhealthy."""
     from agora.ops.po_watch import inspect_board
 
-    report = inspect_board(board, stale_seconds=stale_seconds)
+    if hasattr(board, "default"):
+        board = getattr(board, "default", "agora") or "agora"
+    if hasattr(stale_seconds, "default"):
+        stale_seconds = int(getattr(stale_seconds, "default", 900) or 900)
+    report = inspect_board(str(board), stale_seconds=int(stale_seconds))
     published = False
     message = None
     if report.get("ok") and not report.get("healthy"):
