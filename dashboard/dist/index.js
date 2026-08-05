@@ -210,6 +210,8 @@
     if (!slug) return false;
     if (!name) return false;
     if (slug === "emptyname") return false;
+    // Mark default channels as protected so the UI disables deletion.
+    channel.protected = ["praca", "planejamento", "decisoes", "incidentes", "workspace"].includes(slug);
     return true;
   }
 
@@ -309,21 +311,174 @@
     }, initials(name || type));
   }
 
-  function ChannelItem({ channel, selected, onClick, unread }) {
+  function ChannelItem({ channel, selected, onClick, unread, onPin, onRename, onDelete }) {
     const displayName = channelDisplayName(channel);
     const description = channel.description || "";
+    const hasActions = !!(onPin || onRename || onDelete);
+    const [menuOpen, setMenuOpen] = useState(false);
+    const [renaming, setRenaming] = useState(false);
+    const [renameValue, setRenameValue] = useState("");
+    const [renameBusy, setRenameBusy] = useState(false);
+    const [renameError, setRenameError] = useState(null);
+    const [confirmingDelete, setConfirmingDelete] = useState(false);
+    const [deleteBusy, setDeleteBusy] = useState(false);
+    const [deleteError, setDeleteError] = useState(null);
+
+    useEffect(function () {
+      if (!menuOpen) return;
+      function handler(e) {
+        if (e && e.target && e.target.closest(".agora-channel-menu-wrapper")) return;
+        setMenuOpen(false);
+      }
+      // Defer registration so the same click that opened the menu does not close it.
+      const id = setTimeout(function () { document.addEventListener("click", handler); }, 0);
+      return function () { clearTimeout(id); document.removeEventListener("click", handler); };
+    }, [menuOpen]);
+
+    function startRename(e) {
+      if (e) e.stopPropagation();
+      setMenuOpen(false);
+      setRenameValue(displayName);
+      setRenameError(null);
+      setRenaming(true);
+    }
+
+    function cancelRename(e) {
+      if (e) e.stopPropagation();
+      setRenaming(false);
+      setRenameValue("");
+      setRenameError(null);
+    }
+
+    function submitRename(e) {
+      if (e) e.preventDefault();
+      const nextName = renameValue.trim();
+      if (!nextName || nextName === displayName) { cancelRename(); return; }
+      setRenameBusy(true);
+      setRenameError(null);
+      onRename(channel.slug, nextName)
+        .then(function () { setRenaming(false); })
+        .catch(function (err) { setRenameError(parseApiError(err)); })
+        .finally(function () { setRenameBusy(false); });
+    }
+
+    function startDelete(e) {
+      if (e) e.stopPropagation();
+      setMenuOpen(false);
+      setDeleteError(null);
+      setConfirmingDelete(true);
+    }
+
+    function cancelDelete(e) {
+      if (e) e.stopPropagation();
+      setConfirmingDelete(false);
+      setDeleteError(null);
+    }
+
+    function confirmDeleteChannel(e) {
+      if (e) e.stopPropagation();
+      setDeleteBusy(true);
+      setDeleteError(null);
+      onDelete(channel.slug)
+        .then(function () { setConfirmingDelete(false); })
+        .catch(function (err) { setDeleteError(parseApiError(err)); })
+        .finally(function () { setDeleteBusy(false); });
+    }
+
+    function pinChannel(e) {
+      e.stopPropagation();
+      setMenuOpen(false);
+      onPin(channel.slug, !channel.pinned);
+    }
+
+    const pinLabel = channel.pinned ? "Desfixar canal" : "Fixar canal";
+
+    if (renaming) {
+      return h("div", { className: cn("agora-channel", "agora-channel--renaming", selected && "agora-channel--active") },
+        h("form", { className: "agora-channel-rename-form", onSubmit: submitRename },
+          h("input", {
+            className: "agora-channel-rename-input",
+            value: renameValue,
+            onChange: function (e) { setRenameValue(e.target.value); },
+            disabled: renameBusy,
+            autoFocus: true,
+            onClick: function (e) { e.stopPropagation(); },
+          }),
+          renameError && h("div", { className: "agora-channel-rename-error" }, renameError),
+          h("div", { className: "agora-channel-rename-actions" },
+            h(Button, { type: "submit", size: "sm", disabled: renameBusy || !renameValue.trim() },
+              renameBusy ? h(LoadingDots, { label: "Salvando..." }) : "Salvar"),
+            h(Button, { type: "button", size: "sm", variant: "outline", onClick: cancelRename, disabled: renameBusy }, "Cancelar"),
+          ),
+        ),
+      );
+    }
+
+    if (confirmingDelete) {
+      return h("div", { className: cn("agora-channel", "agora-channel--confirm-delete") },
+        h("div", { className: "agora-channel-delete-confirm" },
+          h("p", { className: "agora-channel-delete-confirm__text" },
+            `Excluir #${channel.slug}? Esta ação não pode ser desfeita.`),
+          deleteError && h("div", { className: "agora-channel-delete-confirm__error", role: "alert" }, deleteError),
+          h("div", { className: "agora-channel-rename-actions" },
+            h(Button, { type: "button", size: "sm", variant: "outline", onClick: cancelDelete, disabled: deleteBusy }, "Cancelar"),
+            h(Button, { type: "button", size: "sm", onClick: confirmDeleteChannel, disabled: deleteBusy },
+              deleteBusy ? h(LoadingDots, { label: "Excluindo..." }) : "Excluir"),
+          ),
+        ),
+      );
+    }
+
     return h("button", {
-      className: cn("agora-channel", selected && "agora-channel--active"),
+      className: cn(
+        "agora-channel",
+        selected && "agora-channel--active",
+        channel.pinned && "agora-channel--pinned"
+      ),
       role: "tab",
       "aria-selected": selected,
       "aria-label": `Canal ${displayName}${description ? ": " + description : ""}`,
       onClick: onClick,
     },
+      channel.pinned && h("span", { className: "agora-channel__pin", title: "Canal fixado" }, "📌"),
       h("div", { className: "agora-channel-info" },
         h("span", { className: "agora-channel-name" }, displayName),
         description && h("span", { className: "agora-channel-desc" }, description),
       ),
       unread > 0 && h(Badge, { className: "agora-channel-badge", "aria-hidden": true }, String(unread)),
+      hasActions && h("div", { className: "agora-channel-menu-wrapper" },
+        h("button", {
+          type: "button",
+          className: "agora-channel-menu-btn",
+          "aria-label": `Opções de ${displayName}`,
+          "aria-haspopup": "menu",
+          "aria-expanded": menuOpen,
+          onClick: function (e) {
+            e.stopPropagation();
+            setMenuOpen(true);
+          },
+        }, "⋯"),
+        menuOpen && h("div", { className: "agora-channel-menu", role: "menu", onClick: function (e) { e.stopPropagation(); } },
+          onPin && h("button", {
+            type: "button",
+            className: "agora-channel-menu-item",
+            role: "menuitem",
+            onClick: pinChannel,
+          }, channel.pinned ? "📌 " + pinLabel : "📌 " + pinLabel),
+          onRename && h("button", {
+            type: "button",
+            className: "agora-channel-menu-item",
+            role: "menuitem",
+            onClick: startRename,
+          }, "✏️ Renomear"),
+          onDelete && !channel.protected && h("button", {
+            type: "button",
+            className: cn("agora-channel-menu-item", "agora-channel-menu-item--danger"),
+            role: "menuitem",
+            onClick: startDelete,
+          }, "🗑 Excluir"),
+        ),
+      ),
     );
   }
 
@@ -2445,6 +2600,64 @@
                                 setChannelUnreadCounts(function (prev) {
                                   return Object.assign({}, prev, { [c.slug]: 0 });
                                 });
+                              },
+                              onPin: function (slug, pinned) {
+                                setChannels(function (prev) {
+                                  const next = prev.map(function (ch) {
+                                    return ch.slug === slug ? Object.assign({}, ch, { pinned: pinned }) : ch;
+                                  });
+                                  next.sort(function (a, b) {
+                                    if (a.pinned === b.pinned) return 0;
+                                    return a.pinned ? -1 : 1;
+                                  });
+                                  return next;
+                                });
+                                SDK.fetchJSON(`${API_AGORA}/admin/channels/${encodeURIComponent(slug)}`, {
+                                  method: "PATCH",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ pinned: pinned }),
+                                })
+                                  .catch(function (err) {
+                                    setChannels(function (prev) {
+                                      const next = prev.map(function (ch) {
+                                        return ch.slug === slug ? Object.assign({}, ch, { pinned: !pinned }) : ch;
+                                      });
+                                      next.sort(function (a, b) {
+                                        if (a.pinned === b.pinned) return 0;
+                                        return a.pinned ? -1 : 1;
+                                      });
+                                      return next;
+                                    });
+                                    setError(tx(t, "pinChannelError", "Erro ao alterar fixação: ") + parseApiError(err));
+                                  });
+                              },
+                              onRename: function (slug, name) {
+                                return SDK.fetchJSON(`${API_AGORA}/channels/${encodeURIComponent(slug)}`, {
+                                  method: "PATCH",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ name: name }),
+                                })
+                                  .then(function (data) {
+                                    const updated = data && data.channel;
+                                    setChannels(function (prev) {
+                                      return prev.map(function (ch) {
+                                        return ch.slug === slug ? Object.assign({}, ch, updated ? { name: updated.name || name } : { name: name }) : ch;
+                                      });
+                                    });
+                                  });
+                              },
+                              onDelete: function (slug) {
+                                return SDK.fetchJSON(`${API_AGORA}/channels/${encodeURIComponent(slug)}`, {
+                                  method: "DELETE",
+                                  headers: { "Content-Type": "application/json" },
+                                })
+                                  .then(function () {
+                                    setChannels(function (prev) { return prev.filter(function (ch) { return ch.slug !== slug; }); });
+                                    if (selectedSlugRef.current === slug) {
+                                      setSelectedSlug("praca");
+                                      setChannelUnreadCounts(function (prev) { return Object.assign({}, prev, { praca: 0 }); });
+                                    }
+                                  });
                               },
                             });
                           }),
