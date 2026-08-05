@@ -331,6 +331,7 @@ def _init_db() -> None:
                 slug TEXT UNIQUE NOT NULL,
                 name TEXT NOT NULL,
                 description TEXT,
+                archived INTEGER NOT NULL DEFAULT 0,
                 created_at INTEGER NOT NULL
             );
 
@@ -879,6 +880,7 @@ def _channel_dict(row: sqlite3.Row) -> dict[str, Any]:
         "slug": row["slug"],
         "name": row["name"],
         "description": row["description"],
+        "archived": bool(row["archived"]) if "archived" in row else False,
         "created_at": row["created_at"],
     }
 
@@ -2347,6 +2349,159 @@ def admin_create_channel(payload: CreateChannelBody):
     return {"channel": channel}
 
 
+# Slugs that are protected from deletion or slug rename.
+_DEFAULT_CHANNEL_SLUGS = frozenset(
+    {ch["slug"] for ch in DEFAULT_CHANNELS}
+)
+
+
+class UpdateChannelBody(BaseModel):
+    name: str | None = None
+    description: str | None = None
+
+
+@router.patch("/admin/channels/{slug}")
+def admin_update_channel(slug: str, payload: UpdateChannelBody):
+    """Admin endpoint to update a channel's name and/or description.
+
+    The slug cannot be changed (it is the stable identity used by messages,
+    threads, notifications and event payloads). Default channels can have
+    their name/description edited but are still protected from deletion.
+
+    **Request:**
+
+    ```json
+    {"name": "Novo Nome", "description": "Nova descrição"}
+    ```
+
+    At least one field must be provided. Fields set to ``null`` or omitted
+    are left unchanged. Pass an empty string for description to clear it.
+
+    **Response (200 OK):**
+
+    ```json
+    {"channel": {"id": 1, "slug": "praca", "name": "Novo Nome", ...}}
+    ```
+    """
+    if not slug:
+        raise HTTPException(status_code=400, detail="slug is required")
+
+    updates: dict[str, Any] = {}
+    if payload.name is not None:
+        updates["name"] = _validate_channel_name(payload.name)
+    if payload.description is not None:
+        updates["description"] = payload.description.strip()
+
+    if not updates:
+        raise HTTPException(
+            status_code=400,
+            detail="at least one field (name or description) must be provided",
+        )
+
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM agora_channels WHERE slug = ?", (slug,)
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"channel '{slug}' not found")
+
+        set_clauses = ", ".join(f"{k} = ?" for k in updates)
+        params = list(updates.values()) + [row["id"]]
+        conn.execute(
+            f"UPDATE agora_channels SET {set_clauses} WHERE id = ?", params
+        )
+        _emit_event(
+            conn, "channel", str(row["id"]), "updated",
+            {"slug": slug, "fields": list(updates.keys())},
+        )
+        conn.commit()
+
+        updated = conn.execute(
+            "SELECT * FROM agora_channels WHERE id = ?", (row["id"],)
+        ).fetchone()
+        return {"channel": _channel_dict(updated)}
+
+
+@router.delete("/admin/channels/{slug}")
+def admin_delete_channel(slug: str):
+    """Admin endpoint to delete a channel.
+
+    **Safeguards:**
+
+    * Default channels (praca, planejamento, decisoes, incidentes, workspace)
+      cannot be deleted. Returns 409 Conflict.
+    * If the channel has messages or threads, they are permanently deleted
+      along with the channel. A confirmation is returned with the counts.
+
+    **Response (200 OK):**
+
+    ```json
+    {"ok": true, "slug": "canal-teste", "deleted_messages": 3, "deleted_threads": 0}
+    ```
+
+    **Errors:**
+
+    * ``404`` — channel not found.
+    * ``409`` — cannot delete a default channel.
+    """
+    if not slug:
+        raise HTTPException(status_code=400, detail="slug is required")
+
+    if slug in _DEFAULT_CHANNEL_SLUGS:
+        raise HTTPException(
+            status_code=409,
+            detail=f"cannot delete default channel '{slug}'",
+        )
+
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM agora_channels WHERE slug = ?", (slug,)
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"channel '{slug}' not found")
+
+        channel_id = row["id"]
+
+        # Delete associated notifications referencing messages in this channel.
+        conn.execute(
+            "DELETE FROM agora_notifications WHERE channel_id = ?", (channel_id,)
+        )
+        # Delete decisions on threads in this channel.
+        conn.execute(
+            "DELETE FROM agora_decisions WHERE thread_id IN "
+            "(SELECT id FROM agora_threads WHERE channel_id = ?)",
+            (channel_id,),
+        )
+        # Delete messages in this channel.
+        msg_count = conn.execute(
+            "SELECT COUNT(*) FROM agora_messages WHERE channel_id = ?", (channel_id,)
+        ).fetchone()[0]
+        conn.execute(
+            "DELETE FROM agora_messages WHERE channel_id = ?", (channel_id,)
+        )
+        # Delete threads in this channel.
+        thread_count = conn.execute(
+            "SELECT COUNT(*) FROM agora_threads WHERE channel_id = ?", (channel_id,)
+        ).fetchone()[0]
+        conn.execute(
+            "DELETE FROM agora_threads WHERE channel_id = ?", (channel_id,)
+        )
+        # Delete the channel itself.
+        conn.execute("DELETE FROM agora_channels WHERE id = ?", (channel_id,))
+        _emit_event(
+            conn, "channel", str(channel_id), "deleted",
+            {"slug": slug, "deleted_messages": msg_count, "deleted_threads": thread_count},
+        )
+        conn.commit()
+
+        return {
+            "ok": True,
+            "slug": slug,
+            "deleted_messages": msg_count,
+            "deleted_threads": thread_count,
+        }
+
+
 @router.post("/channels/cleanup-emptyname")
 def cleanup_emptyname_channel():
     """Migrate any legacy 'emptyname' channel into the default 'praca' channel.
@@ -2360,6 +2515,12 @@ def cleanup_emptyname_channel():
     return result
 
 
+def _is_default_channel(slug: str) -> bool:
+    return slug in {ch["slug"] for ch in DEFAULT_CHANNELS}
+
+
+
+
 @router.get("/channels/{slug}")
 def get_channel(slug: str):
     """Return a single channel by slug."""
@@ -2370,6 +2531,212 @@ def get_channel(slug: str):
         if row is None:
             raise HTTPException(status_code=404, detail=f"channel '{slug}' not found")
         return {"channel": _channel_dict(row)}
+
+
+@router.patch("/channels/{slug}")
+def update_channel(slug: str, payload: UpdateChannelBody):
+    """Update a channel's name/description/archived flag.
+
+    Default channels cannot be archived or deleted, only renamed/described.
+    """
+    fields: list[str] = []
+    values: list[Any] = []
+
+    if payload.name is not None:
+        fields.append("name = ?")
+        values.append(_validate_channel_name(payload.name))
+    if payload.description is not None:
+        fields.append("description = ?")
+        values.append(payload.description.strip())
+    if payload.archived is not None:
+        if _is_default_channel(slug) and payload.archived:
+            raise HTTPException(
+                status_code=400,
+                detail=f"default channel '{slug}' cannot be archived",
+            )
+        fields.append("archived = ?")
+        values.append(1 if payload.archived else 0)
+
+    if not fields:
+        raise HTTPException(status_code=400, detail="no fields to update")
+
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM agora_channels WHERE slug = ?", (slug,)
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"channel '{slug}' not found")
+        values.append(slug)
+        conn.execute(
+            f"UPDATE agora_channels SET {', '.join(fields)} WHERE slug = ?",
+            values,
+        )
+        _emit_event(conn, "channel", str(row["id"]), "updated", {"slug": slug})
+        conn.commit()
+        row = conn.execute("SELECT * FROM agora_channels WHERE slug = ?", (slug,)).fetchone()
+        return {"channel": _channel_dict(row)}
+
+
+class MergeChannelBody(BaseModel):
+    target_slug: str
+
+
+@router.post("/channels/{slug}/merge")
+def merge_channel(slug: str, payload: MergeChannelBody):
+    """Move all messages and threads from one channel into another, then delete the source.
+
+    Default channels cannot be the source of a merge. The target channel must
+    exist. This is the safe "limpar/unificar" operation requested by users.
+    """
+    if _is_default_channel(slug):
+        raise HTTPException(
+            status_code=400,
+            detail=f"default channel '{slug}' cannot be merged",
+        )
+    if slug == payload.target_slug:
+        raise HTTPException(status_code=400, detail="source and target cannot be the same")
+
+    with _connect() as conn:
+        source = conn.execute(
+            "SELECT id FROM agora_channels WHERE slug = ?", (slug,)
+        ).fetchone()
+        target = conn.execute(
+            "SELECT id FROM agora_channels WHERE slug = ?", (payload.target_slug,)
+        ).fetchone()
+        if source is None:
+            raise HTTPException(status_code=404, detail=f"channel '{slug}' not found")
+        if target is None:
+            raise HTTPException(status_code=404, detail=f"target channel '{payload.target_slug}' not found")
+
+        source_id = source["id"]
+        target_id = target["id"]
+
+        conn.execute(
+            "UPDATE agora_threads SET channel_id = ? WHERE channel_id = ?",
+            (target_id, source_id),
+        )
+        moved_threads = conn.execute("SELECT changes()").fetchone()[0]
+        conn.execute(
+            "UPDATE agora_messages SET channel_id = ? WHERE channel_id = ?",
+            (target_id, source_id),
+        )
+        moved_messages = conn.execute("SELECT changes()").fetchone()[0]
+        conn.execute(
+            "UPDATE agora_notifications SET channel_id = ? WHERE channel_id = ?",
+            (target_id, source_id),
+        )
+        conn.execute("DELETE FROM agora_channels WHERE id = ?", (source_id,))
+
+        _emit_event(
+            conn,
+            "channel",
+            str(target_id),
+            "merged",
+            {
+                "source_slug": slug,
+                "target_slug": payload.target_slug,
+                "moved_threads": moved_threads,
+                "moved_messages": moved_messages,
+            },
+        )
+        conn.commit()
+
+    return {
+        "ok": True,
+        "source_slug": slug,
+        "target_slug": payload.target_slug,
+        "moved_threads": moved_threads,
+        "moved_messages": moved_messages,
+    }
+
+
+@router.delete("/channels/{slug}")
+def delete_channel(slug: str):
+    """Delete a channel and all of its messages/threads.
+
+    Default channels are protected. For a safer cleanup, prefer
+    ``POST /channels/{slug}/merge`` to move content to another channel.
+    """
+    if _is_default_channel(slug):
+        raise HTTPException(
+            status_code=400,
+            detail=f"default channel '{slug}' cannot be deleted",
+        )
+
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM agora_channels WHERE slug = ?", (slug,)
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"channel '{slug}' not found")
+        channel_id = row["id"]
+        conn.execute("DELETE FROM agora_threads WHERE channel_id = ?", (channel_id,))
+        conn.execute("DELETE FROM agora_messages WHERE channel_id = ?", (channel_id,))
+        conn.execute("DELETE FROM agora_notifications WHERE channel_id = ?", (channel_id,))
+        conn.execute("DELETE FROM agora_channels WHERE id = ?", (channel_id,))
+        _emit_event(conn, "channel", str(channel_id), "deleted", {"slug": slug})
+        conn.commit()
+    return {"ok": True, "slug": slug}
+
+
+@router.post("/channels/prune-empty")
+def prune_empty_channels():
+    """Delete every non-default channel that has zero messages and zero threads.
+
+    Returns a list of removed slugs and the remaining channel count.
+    """
+    removed: list[str] = []
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT c.id, c.slug FROM agora_channels c
+            WHERE c.slug NOT IN ({placeholders})
+              AND NOT EXISTS (SELECT 1 FROM agora_messages m WHERE m.channel_id = c.id)
+              AND NOT EXISTS (SELECT 1 FROM agora_threads t WHERE t.channel_id = c.id)
+            """.format(
+                placeholders=",".join("?" * len(DEFAULT_CHANNELS))
+            ),
+            tuple(ch["slug"] for ch in DEFAULT_CHANNELS),
+        ).fetchall()
+        for row in rows:
+            conn.execute("DELETE FROM agora_notifications WHERE channel_id = ?", (row["id"],))
+            conn.execute("DELETE FROM agora_channels WHERE id = ?", (row["id"],))
+            removed.append(row["slug"])
+            _emit_event(conn, "channel", str(row["id"]), "deleted", {"slug": row["slug"]})
+        conn.commit()
+        remaining = conn.execute("SELECT COUNT(*) AS c FROM agora_channels").fetchone()["c"]
+    return {"ok": True, "removed": removed, "remaining": remaining}
+
+
+@router.post("/channels/{slug}/clear-messages")
+def clear_channel_messages(slug: str):
+    """Delete all messages in a channel, optionally keeping the channel itself.
+
+    Useful for "limpar conversa" without removing the channel. Threads whose
+    linked messages are removed are left empty (they can be deleted separately).
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM agora_channels WHERE slug = ?", (slug,)
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"channel '{slug}' not found")
+        channel_id = row["id"]
+        conn.execute("DELETE FROM agora_messages WHERE channel_id = ?", (channel_id,))
+        deleted = conn.execute("SELECT changes()").fetchone()[0]
+        conn.execute(
+            "DELETE FROM agora_notifications WHERE channel_id = ? AND message_id NOT IN (SELECT id FROM agora_messages)",
+            (channel_id,),
+        )
+        _emit_event(
+            conn,
+            "channel",
+            str(channel_id),
+            "cleared",
+            {"slug": slug, "deleted_messages": deleted},
+        )
+        conn.commit()
+    return {"ok": True, "slug": slug, "deleted_messages": deleted}
 
 
 # ---------------------------------------------------------------------------
@@ -3209,8 +3576,9 @@ def sprint_compile(payload: SprintCompileBody):
 
 @router.get("/po/watch")
 def po_watch(board: str = "agora", stale_seconds: int = 900):
-    from agora.ops.po_watch import inspect_board
     from fastapi import Query as _Q  # noqa: F401 — kept for OpenAPI if wrapped later
+
+    from agora.ops.po_watch import inspect_board
 
     # FastAPI injects Query defaults when served; direct calls pass plain values.
     if hasattr(board, "default"):

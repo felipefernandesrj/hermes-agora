@@ -633,13 +633,33 @@
   // Admin screen: channel management
   // -------------------------------------------------------------------------
 
-  function AdminScreen({ channels, loading, onClose, onChannelCreated }) {
+  function AdminScreen({ channels, loading, onClose, onChannelCreated, onChannelDeleted, onChannelUpdated }) {
     const { t } = useI18n();
     const [slug, setSlug] = useState("");
     const [name, setName] = useState("");
     const [description, setDescription] = useState("");
     const [busy, setBusy] = useState(false);
     const [formError, setFormError] = useState(null);
+    // Per-channel config menu state
+    const [menuOpenSlug, setMenuOpenSlug] = useState(null);
+    const [editingChannel, setEditingChannel] = useState(null);
+    const [editName, setEditName] = useState("");
+    const [editDesc, setEditDesc] = useState("");
+    const [editBusy, setEditBusy] = useState(false);
+    const [editError, setEditError] = useState(null);
+    const [confirmingDelete, setConfirmingDelete] = useState(null);
+    const [deleteBusy, setDeleteBusy] = useState(false);
+    const [deleteError, setDeleteError] = useState(null);
+    const [clearingChannel, setClearingChannel] = useState(null);
+    const [clearBusy, setClearBusy] = useState(false);
+    const [clearError, setClearError] = useState(null);
+    const [confirmingMerge, setConfirmingMerge] = useState(null);
+    const [mergeBusy, setMergeBusy] = useState(false);
+    const [mergeError, setMergeError] = useState(null);
+    const [pruneBusy, setPruneBusy] = useState(false);
+    const [pruneResult, setPruneResult] = useState(null);
+
+    var DEFAULT_SLUGS = { praca: true, planejamento: true, decisoes: true, incidentes: true, workspace: true };
 
     function normalizeSlug(raw) {
       return raw
@@ -710,6 +730,269 @@
         .finally(function () { setBusy(false); });
     }
 
+    function startEdit(channel) {
+      setEditingChannel(channel);
+      setEditName(channel.name || "");
+      setEditDesc(channel.description || "");
+      setEditError(null);
+      setMenuOpenSlug(null);
+    }
+
+    function cancelEdit() {
+      setEditingChannel(null);
+      setEditName("");
+      setEditDesc("");
+      setEditError(null);
+    }
+
+    function submitEdit(e) {
+      e.preventDefault();
+      if (!editingChannel) return;
+      var ch = editingChannel;
+      var body = {};
+      if ((editName.trim() || "") !== (ch.name || "")) body.name = editName.trim();
+      if ((editDesc.trim() || "") !== (ch.description || "")) body.description = editDesc.trim();
+      if (!Object.keys(body).length) { cancelEdit(); return; }
+      setEditBusy(true);
+      setEditError(null);
+      SDK.fetchJSON(`${API_AGORA}/admin/channels/${encodeURIComponent(ch.slug)}`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+        headers: { "Content-Type": "application/json" },
+      })
+        .then(function () {
+          cancelEdit();
+          if (onChannelUpdated) onChannelUpdated(ch.slug);
+        })
+        .catch(function (err) {
+          setEditError(parseApiError(err));
+        })
+        .finally(function () { setEditBusy(false); });
+    }
+
+    function startConfirmDelete(channel) {
+      setConfirmingDelete(channel);
+      setDeleteError(null);
+      setMenuOpenSlug(null);
+    }
+
+    function cancelDelete() {
+      setConfirmingDelete(null);
+      setDeleteError(null);
+    }
+
+    function confirmDelete() {
+      if (!confirmingDelete) return;
+      setDeleteBusy(true);
+      setDeleteError(null);
+      SDK.fetchJSON(`${API_AGORA}/admin/channels/${encodeURIComponent(confirmingDelete.slug)}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+      })
+        .then(function (data) {
+          var slug = confirmingDelete.slug;
+          setConfirmingDelete(null);
+          if (onChannelDeleted) onChannelDeleted(slug);
+        })
+        .catch(function (err) {
+          setDeleteError(parseApiError(err));
+        })
+        .finally(function () { setDeleteBusy(false); });
+    }
+
+    function startClearMessages(channel) {
+      setClearingChannel(channel);
+      setClearError(null);
+      setMenuOpenSlug(null);
+    }
+
+    function cancelClear() {
+      setClearingChannel(null);
+      setClearError(null);
+    }
+
+    function confirmClear() {
+      if (!clearingChannel) return;
+      setClearBusy(true);
+      setClearError(null);
+      SDK.fetchJSON(`${API_AGORA}/channels/${encodeURIComponent(clearingChannel.slug)}/clear-messages`, { method: "POST" })
+        .then(function () {
+          setClearingChannel(null);
+          if (onChannelUpdated) onChannelUpdated(clearingChannel.slug);
+        })
+        .catch(function (err) { setClearError(parseApiError(err)); })
+        .finally(function () { setClearBusy(false); });
+    }
+
+    function startConfirmMerge(channel) {
+      setConfirmingMerge(channel);
+      setMergeError(null);
+      setMenuOpenSlug(null);
+    }
+
+    function cancelMerge() {
+      setConfirmingMerge(null);
+      setMergeError(null);
+    }
+
+    function confirmMergeToDefault() {
+      if (!confirmingMerge) return;
+      setMergeBusy(true);
+      setMergeError(null);
+      var target = confirmingMerge.defaultTarget || "praca";
+      SDK.fetchJSON(`${API_AGORA}/channels/${encodeURIComponent(confirmingMerge.slug)}/merge`, {
+        method: "POST",
+        body: JSON.stringify({ target_slug: target }),
+        headers: { "Content-Type": "application/json" },
+      })
+        .then(function (data) {
+          var slug = confirmingMerge.slug;
+          setConfirmingMerge(null);
+          if (onChannelDeleted) onChannelDeleted(slug);
+        })
+        .catch(function (err) { setMergeError(parseApiError(err)); })
+        .finally(function () { setMergeBusy(false); });
+    }
+
+    function runPruneEmpty() {
+      if (pruneBusy) return;
+      setPruneBusy(true);
+      setPruneResult(null);
+      SDK.fetchJSON(`${API_AGORA}/channels/prune-empty`, { method: "POST" })
+        .then(function (data) {
+          setPruneResult(data);
+          if (onChannelUpdated) onChannelUpdated(null);
+        })
+        .catch(function (err) { setPruneResult({ error: parseApiError(err) }); })
+        .finally(function () { setPruneBusy(false); });
+    }
+
+    // Close menu on outside click
+    useEffect(function () {
+      if (!menuOpenSlug) return;
+      function handler() { setMenuOpenSlug(null); }
+      document.addEventListener("click", handler);
+      return function () { document.removeEventListener("click", handler); };
+    }, [menuOpenSlug]);
+
+    function renderChannelItem(c) {
+      var isDefault = !!DEFAULT_SLUGS[c.slug];
+
+      if (editingChannel && editingChannel.slug === c.slug) {
+        return h("li", { key: c.slug, className: "agora-admin-channel-item agora-admin-channel-item--editing" },
+          h("form", { className: "agora-admin-edit-form", onSubmit: submitEdit },
+            h("label", { className: "agora-admin-field" },
+              h("span", { className: "agora-admin-label" }, "Nome"),
+              h(Input, { value: editName, onChange: function (e) { setEditName(e.target.value); }, disabled: editBusy, required: true }),
+            ),
+            h("label", { className: "agora-admin-field" },
+              h("span", { className: "agora-admin-label" }, "Descrição"),
+              h(Input, { value: editDesc, onChange: function (e) { setEditDesc(e.target.value); }, disabled: editBusy, placeholder: "Descrição opcional" }),
+            ),
+            editError && h("div", { className: "agora-admin-form-error", role: "alert" }, editError),
+            h("div", { className: "agora-admin-edit-actions" },
+              h(Button, { type: "submit", size: "sm", disabled: editBusy || !editName.trim() },
+                editBusy ? h(LoadingDots, { label: "Salvando..." }) : "Salvar"),
+              h(Button, { type: "button", size: "sm", variant: "outline", onClick: cancelEdit, disabled: editBusy }, "Cancelar"),
+            ),
+          ),
+        );
+      }
+
+      if (confirmingDelete && confirmingDelete.slug === c.slug) {
+        return h("li", { key: c.slug, className: "agora-admin-channel-item agora-admin-channel-item--confirm-delete" },
+          h("div", { className: "agora-admin-delete-confirm" },
+            h("p", { className: "agora-admin-delete-confirm__text" },
+              "Excluir #", c.slug, "? Esta ação não pode ser desfeita."),
+            deleteError && h("div", { className: "agora-admin-form-error", role: "alert" }, deleteError),
+            h("div", { className: "agora-admin-edit-actions" },
+              h(Button, { type: "button", size: "sm", variant: "outline", onClick: cancelDelete, disabled: deleteBusy }, "Cancelar"),
+              h(Button, { type: "button", size: "sm", onClick: confirmDelete, disabled: deleteBusy },
+                deleteBusy ? h(LoadingDots, { label: "Excluindo..." }) : "Excluir"),
+            ),
+          ),
+        );
+      }
+
+      if (clearingChannel && clearingChannel.slug === c.slug) {
+        return h("li", { key: c.slug, className: "agora-admin-channel-item agora-admin-channel-item--confirm-delete" },
+          h("div", { className: "agora-admin-delete-confirm" },
+            h("p", { className: "agora-admin-delete-confirm__text" },
+              "Limpar todas as mensagens de #", c.slug, "?"),
+            clearError && h("div", { className: "agora-admin-form-error", role: "alert" }, clearError),
+            h("div", { className: "agora-admin-edit-actions" },
+              h(Button, { type: "button", size: "sm", variant: "outline", onClick: cancelClear, disabled: clearBusy }, "Cancelar"),
+              h(Button, { type: "button", size: "sm", variant: "outline", onClick: confirmClear, disabled: clearBusy },
+                clearBusy ? h(LoadingDots, { label: "Limpando..." }) : "Limpar"),
+            ),
+          ),
+        );
+      }
+
+      if (confirmingMerge && confirmingMerge.slug === c.slug) {
+        return h("li", { key: c.slug, className: "agora-admin-channel-item agora-admin-channel-item--confirm-delete" },
+          h("div", { className: "agora-admin-delete-confirm" },
+            h("p", { className: "agora-admin-delete-confirm__text" },
+              "Mover todas as mensagens de #", c.slug, " para #praca e remover o canal?"),
+            mergeError && h("div", { className: "agora-admin-form-error", role: "alert" }, mergeError),
+            h("div", { className: "agora-admin-edit-actions" },
+              h(Button, { type: "button", size: "sm", variant: "outline", onClick: cancelMerge, disabled: mergeBusy }, "Cancelar"),
+              h(Button, { type: "button", size: "sm", onClick: confirmMergeToDefault, disabled: mergeBusy },
+                mergeBusy ? h(LoadingDots, { label: "Mesclando..." }) : "Mesclar"),
+            ),
+          ),
+        );
+      }
+
+      return h("li", { key: c.slug, className: "agora-admin-channel-item" },
+        h("div", { className: "agora-admin-channel-item__main" },
+          h("span", { className: "agora-admin-channel-item__name" }, c.name),
+          h("span", { className: "agora-admin-channel-item__slug" }, "#" + c.slug),
+          isDefault && h("span", { className: "agora-admin-channel-item__badge" }, "padrão"),
+          h("div", { className: "agora-admin-channel-item__menu-wrapper" },
+            h("button", {
+              type: "button",
+              className: "agora-admin-channel-item__menu-btn",
+              "aria-label": "Configurações de " + c.name,
+              "aria-haspopup": "menu",
+              "aria-expanded": menuOpenSlug === c.slug,
+              onClick: function (e) {
+                e.stopPropagation();
+                setMenuOpenSlug(function (prev) { return prev === c.slug ? null : c.slug; });
+              },
+            }, "⋯"),
+            menuOpenSlug === c.slug && h("div", { className: "agora-admin-channel-item__menu", role: "menu", onClick: function (e) { e.stopPropagation(); } },
+              h("button", {
+                type: "button",
+                className: "agora-admin-channel-item__menu-item",
+                role: "menuitem",
+                onClick: function () { startEdit(c); },
+              }, "✏️ Editar"),
+              h("button", {
+                type: "button",
+                className: "agora-admin-channel-item__menu-item",
+                role: "menuitem",
+                onClick: function () { startClearMessages(c); },
+              }, "🧹 Limpar mensagens"),
+              !isDefault && h("button", {
+                type: "button",
+                className: "agora-admin-channel-item__menu-item",
+                role: "menuitem",
+                onClick: function () { startConfirmMerge(c); },
+              }, "➡️ Mesclar com #praca"),
+              !isDefault && h("button", {
+                type: "button",
+                className: cn("agora-admin-channel-item__menu-item", "agora-admin-channel-item__menu-item--danger"),
+                role: "menuitem",
+                onClick: function () { startConfirmDelete(c); },
+              }, "🗑 Excluir"),
+            ),
+          ),
+        ),
+        c.description && h("p", { className: "agora-admin-channel-item__desc" }, c.description),
+      );
+    }
+
     return h("div", { className: "agora-admin-screen" },
       h("div", { className: "agora-admin-screen__header" },
         h("div", { className: "agora-admin-screen__heading" },
@@ -717,7 +1000,9 @@
           h("h2", { className: "agora-admin-screen__title" }, tx(t, "admin.title", "Admin — Canais")),
           h("p", { className: "agora-admin-screen__subtitle" }, tx(t, "admin.subtitle", "Tela inteira. Feche para voltar à Ágora.")),
         ),
-        h(Button, { size: "sm", variant: "outline", onClick: onClose }, tx(t, "admin.back", "← Voltar à Ágora")),
+        h("div", { className: "agora-admin-screen__actions" },
+          h(Button, { size: "sm", variant: "outline", onClick: onClose }, tx(t, "admin.back", "← Voltar à Ágora")),
+        ),
       ),
       h("div", { className: "agora-admin-screen__body" },
         h("section", { className: "agora-admin-section" },
@@ -742,6 +1027,22 @@
             ),
           ),
         ),
+        h("section", { className: "agora-admin-section agora-admin-section--prune" },
+          h("div", { className: "agora-admin-section__header" },
+            h("h3", { className: "agora-admin-section__title" }, "Limpeza"),
+            h(Button, { size: "sm", variant: "outline", onClick: runPruneEmpty, disabled: pruneBusy },
+              pruneBusy ? h(LoadingDots, { label: "Limpando..." }) : "Remover canais vazios"),
+          ),
+          pruneResult && (
+            pruneResult.error
+              ? h("div", { className: "agora-admin-form-error", role: "alert" }, pruneResult.error)
+              : h("p", { className: "agora-admin-hint" },
+                  pruneResult.removed && pruneResult.removed.length
+                    ? `Removidos ${pruneResult.removed.length} canais vazios: ${pruneResult.removed.join(", ")}.`
+                    : `Nenhum canal vazio. Restantes: ${pruneResult.remaining || channels.length}.`
+                )
+          ),
+        ),
         h("section", { className: "agora-admin-section" },
           h("h3", { className: "agora-admin-section__title" }, tx(t, "admin.existingChannels", "Canais existentes")),
           loading
@@ -749,15 +1050,7 @@
             : channels.length === 0
               ? h(EmptyState, null, tx(t, "admin.noChannels", "Nenhum canal ainda."))
               : h("ul", { className: "agora-admin-channel-list" },
-                  channels.map(function (c) {
-                    return h("li", { key: c.slug, className: "agora-admin-channel-item" },
-                      h("div", { className: "agora-admin-channel-item__main" },
-                        h("span", { className: "agora-admin-channel-item__name" }, c.name),
-                        h("span", { className: "agora-admin-channel-item__slug" }, "#" + c.slug),
-                      ),
-                      c.description && h("p", { className: "agora-admin-channel-item__desc" }, c.description),
-                    );
-                  }),
+                  channels.map(renderChannelItem),
                 ),
         ),
       ),
@@ -2116,6 +2409,15 @@
                   setSelectedSlug(slug);
                   setChannelUnreadCounts(function (prev) { return Object.assign({}, prev, { [slug]: 0 }); });
                 }
+              },
+              onChannelDeleted: function (slug) {
+                setTick(function (n) { return n + 1; });
+                if (selectedSlugRef.current === slug) {
+                  setSelectedSlug(null);
+                }
+              },
+              onChannelUpdated: function (slug) {
+                setTick(function (n) { return n + 1; });
               },
             })
           )

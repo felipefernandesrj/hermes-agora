@@ -1367,6 +1367,123 @@
   margin: 0;
 }
 
+.agora-admin-channel-item__badge {
+  font-size: 0.6rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-muted-foreground);
+  background: color-mix(in srgb, var(--color-muted-foreground, #888) 10%, transparent);
+  padding: 0.1rem 0.35rem;
+  border-radius: 0;
+}
+
+.agora-admin-channel-item__menu-wrapper {
+  position: relative;
+  margin-left: auto;
+}
+
+.agora-admin-channel-item__menu-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0.15rem 0.3rem;
+  color: var(--color-muted-foreground);
+  border-radius: 0;
+  transition: color 0.15s;
+}
+
+.agora-admin-channel-item__menu-btn:hover,
+.agora-admin-channel-item__menu-btn:focus {
+  color: var(--color-foreground);
+}
+
+.agora-admin-channel-item__menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  margin-top: 0.2rem;
+  min-width: 8rem;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.agora-admin-channel-item__menu-item {
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  padding: 0.45rem 0.65rem;
+  font-size: 0.8rem;
+  color: var(--color-foreground);
+  transition: background 0.1s;
+}
+
+.agora-admin-channel-item__menu-item:hover {
+  background: color-mix(in srgb, var(--color-muted-foreground, #888) 8%, transparent);
+}
+
+.agora-admin-channel-item__menu-item--danger {
+  color: var(--color-destructive, #f85149);
+}
+
+.agora-admin-channel-item__menu-item--danger:hover {
+  background: color-mix(in srgb, var(--color-destructive, #f85149) 10%, transparent);
+}
+
+.agora-admin-channel-item--editing,
+.agora-admin-channel-item--confirm-delete {
+  border-color: var(--color-border);
+  background: color-mix(in srgb, var(--color-muted-foreground, #888) 4%, var(--color-card));
+}
+
+.agora-admin-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.agora-admin-edit-actions {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.agora-admin-delete-confirm__text {
+  font-size: 0.8rem;
+  margin: 0 0 0.4rem 0;
+  color: var(--color-foreground);
+}
+
+.agora-admin-screen__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.agora-admin-screen__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.agora-admin-section--prune .agora-admin-section__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
 @media (max-width: 768px) {
   .agora-admin-screen__body {
     padding: 0.75rem;
