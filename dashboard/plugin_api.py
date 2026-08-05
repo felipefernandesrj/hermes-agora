@@ -99,9 +99,32 @@ def agora_cost_collect():
     """One-shot usage collector (safe to call periodically)."""
     try:
         from agora.cost.collector import collect_once
-        return collect_once()
+        from agora.cost.rollup import correlate_task_ids, rebuild_hour_rollups
+
+        result = collect_once()
+        result["rollups_written"] = rebuild_hour_rollups()
+        result["task_correlated"] = correlate_task_ids()
+        return result
     except Exception as exc:
         return {"inserted_events": 0, "errors": [f"{type(exc).__name__}: {exc}"]}
+
+
+@router.get("/cost/by-squad")
+def agora_cost_by_squad(window: str = "24h"):
+    from agora.api.cost import cost_by_squad
+    return {"window": window, "squads": cost_by_squad(window)}
+
+
+@router.get("/cost/by-task/{task_id}")
+def agora_cost_by_task(task_id: str):
+    from agora.api.cost import cost_by_task
+    return cost_by_task(task_id)
+
+
+@router.get("/cost/timeseries")
+def agora_cost_timeseries(window: str = "24h", bucket: str = "hour"):
+    from agora.api.cost import cost_timeseries
+    return {"window": window, "bucket": bucket, "points": cost_timeseries(window, bucket)}
 
 
 # ---------------------------------------------------------------------------
@@ -130,9 +153,9 @@ DEFAULT_CHANNELS: list[dict[str, str]] = [
         "description": "Bloqueios, erros e ações de recuperação.",
     },
     {
-        "slug": "profarma",
-        "name": "Profarma",
-        "description": "Tópicos relacionados ao workspace profarma.dev/Aura.",
+        "slug": "workspace",
+        "name": "Workspace",
+        "description": "Tópicos relacionados a um workspace específico.",
     },
 ]
 

@@ -52,7 +52,31 @@ DEFAULT_AGORA_CONFIG: dict[str, Any] = {
         "currency_unit": "micro_usd",
     },
     "squads": {
-        # Filled in Phase 5. Kept empty so packaging does not pin vendor models.
+        # BRAVO — moderate (daily default). All models >= 200k context on CF Workers AI.
+        # Verified via CF API /models/search 2026-08-04.
+        "bravo": {
+            "techlead": {"provider": "custom:cloudflare-workers-ai", "model": "@cf/zai-org/glm-5.2", "context_window": 262144},
+            "backend": {"provider": "custom:cloudflare-workers-ai", "model": "@cf/moonshotai/kimi-k2.7-code", "context_window": 262144},
+            "frontend": {"provider": "custom:cloudflare-workers-ai", "model": "@cf/moonshotai/kimi-k2.7-code", "context_window": 262144},
+            "qa": {"provider": "custom:cloudflare-workers-ai", "model": "@cf/nvidia/nemotron-3-120b-a12b", "context_window": 256000},
+            "po": {"provider": "custom:cloudflare-workers-ai", "model": "@cf/zai-org/glm-5.2", "context_window": 262144},
+        },
+        # ALFA — premium (architecture, incidents). Uses GitHub Models for vendor diversity.
+        "alfa": {
+            "techlead": {"provider": "custom:github-models", "model": "openai/gpt-4.1", "context_window": 1048576},
+            "backend": {"provider": "custom:github-models", "model": "openai/gpt-4.1", "context_window": 1048576},
+            "frontend": {"provider": "custom:github-models", "model": "openai/gpt-4.1", "context_window": 1048576},
+            "qa": {"provider": "custom:github-models", "model": "openai/gpt-4o", "context_window": 1048576},
+            "po": {"provider": "custom:github-models", "model": "openai/gpt-4.1-mini", "context_window": 1048576},
+        },
+        # CHARLIE — economical (cron, triage, sweeps). Still >= 200k context.
+        "charlie": {
+            "techlead": {"provider": "custom:cloudflare-workers-ai", "model": "@cf/zai-org/glm-5.2", "context_window": 262144},
+            "backend": {"provider": "custom:cloudflare-workers-ai", "model": "@cf/google/gemma-4-26b-a4b-it", "context_window": 256000},
+            "frontend": {"provider": "custom:cloudflare-workers-ai", "model": "@cf/google/gemma-4-26b-a4b-it", "context_window": 256000},
+            "qa": {"provider": "custom:cloudflare-workers-ai", "model": "@cf/nvidia/nemotron-3-120b-a12b", "context_window": 256000},
+            "po": {"provider": "custom:cloudflare-workers-ai", "model": "@cf/google/gemma-4-26b-a4b-it", "context_window": 256000},
+        },
     },
 }
 

@@ -61,7 +61,31 @@ hermes-agora/
 └── tests/
 ```
 
+## Squads
+
+```bash
+python scripts/agora_squad.py list
+python scripts/agora_squad.py show bravo
+python scripts/agora_squad.py apply bravo   # writes model/provider into agent profiles only
+```
+
+Default Hermes profile is never modified.
+
+## Cost (micro-dollar)
+
+```
+GET  /api/plugins/agora/cost/summary?window=24h
+GET  /api/plugins/agora/cost/by-profile?window=24h
+GET  /api/plugins/agora/cost/by-squad?window=24h
+GET  /api/plugins/agora/cost/by-task/{task_id}
+GET  /api/plugins/agora/cost/timeseries?window=24h&bucket=hour
+POST /api/plugins/agora/cost/collect
+```
+
+`cost_micro_usd` is integer µ$ (1e-6 USD).
+
 ## Status
+
 
 Protótipo extraído de uso interno e sanitizado para publicação. Roadmap 1.0:
 

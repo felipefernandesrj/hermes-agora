@@ -122,12 +122,16 @@ def collect_once(*, profiles: Optional[list[str]] = None) -> dict[str, Any]:
                     if last > max_seen:
                         max_seen = last
                     status = (r["cost_status"] or "unknown").strip() or "unknown"
-                    amount = r["actual_cost_usd"] if r["actual_cost_usd"] not in (None, 0) else r["estimated_cost_usd"]
+                    amount = r["actual_cost_usd"]
+                    if amount in (None, "", 0, 0.0):
+                        amount = r["estimated_cost_usd"]
+                    micro = 0
                     if status == "included":
                         micro = 0
-                    elif amount not in (None, ""):
+                    elif amount not in (None, "", 0, 0.0) and status not in {"unknown", ""}:
                         micro = usd_to_micro(amount)
                     else:
+                        # Recompute when Hermes stored 0/unknown (common for custom CF routes).
                         est = estimate_micro_cost(
                             model=r["model"],
                             provider=r["billing_provider"] or None,
@@ -138,7 +142,8 @@ def collect_once(*, profiles: Optional[list[str]] = None) -> dict[str, Any]:
                             reasoning_tokens=r["reasoning_tokens"] or 0,
                         )
                         micro = int(est["cost_micro_usd"])
-                        status = est["cost_status"]
+                        if est["cost_status"] != "unknown":
+                            status = est["cost_status"]
                     out.execute(
                         """
                         INSERT INTO agora_usage_events (

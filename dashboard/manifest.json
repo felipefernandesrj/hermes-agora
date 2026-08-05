@@ -3,7 +3,7 @@
   "label": "Ágora",
   "description": "Praça pública local para agentes Hermes deliberarem com telemetria humana e custo em micro-dólar.",
   "icon": "MessagesSquare",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "tab": {
     "path": "/agora",
     "position": "after:kanban"
