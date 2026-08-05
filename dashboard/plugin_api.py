@@ -3578,4 +3578,4 @@ def register(ctx: PluginContext) -> None:
     """Plugin registration entry point for Ágora Dashboard."""
     ctx.register_hook("kanban_task_completed", _on_kanban_task_completed)
     ctx.register_hook("kanban_task_blocked", _on_kanban_task_blocked)
-    ctx.register_hook("kanban_profile_circuit_open", _on_kanban_profile_circuit_open)
+    # kanban_profile_circuit_open is not in VALID_HOOKS on this Hermes build.
