@@ -57,7 +57,7 @@ from fastapi import (
 from hermes_cli import kanban_db as _kanban_db
 from hermes_cli.plugins import PluginContext
 from hermes_constants import get_default_hermes_root
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 log = logging.getLogger(__name__)
 
