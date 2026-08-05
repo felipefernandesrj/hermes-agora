@@ -39,16 +39,6 @@ def _open_ro(path: Path) -> Optional[sqlite3.Connection]:
 
 
 def _get_watermark(conn: sqlite3.Connection, profile: str) -> float:
-    row = conn.execute(
-        "SELECT value FROM state_meta WHERE key = ?",
-        (f"agora_usage_wm::{profile}",),
-    ).fetchone() if _has_table(conn, "state_meta") else None
-    # state_meta may not exist in agora db — use dedicated table
-    row = conn.execute(
-        "SELECT value FROM agora_migration_log WHERE name = ? ORDER BY id DESC LIMIT 1",
-        (f"usage_wm::{profile}",),
-    ).fetchone() if _has_table(conn, "agora_migration_log") else None
-    # fallback local key table
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS agora_collector_state (
@@ -64,7 +54,7 @@ def _get_watermark(conn: sqlite3.Connection, profile: str) -> float:
     if not row:
         return 0.0
     try:
-        return float(row[0])
+        return float(row["value"] if isinstance(row, sqlite3.Row) else row[0])
     except Exception:
         return 0.0
 
