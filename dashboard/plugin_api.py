@@ -23,6 +23,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+from pathlib import Path
 
 # Ensure standalone package root (parent of dashboard/) is importable when the
 # dashboard host loads plugin_api.py as a free module.
@@ -34,9 +35,9 @@ except Exception:
     pass
 import time
 import unicodedata
+from collections.abc import Generator
 from contextlib import contextmanager
-from pathlib import Path
-from typing import Any, Generator, Optional
+from typing import Any
 
 try:
     import yaml  # type: ignore[import-not-found]
@@ -49,13 +50,14 @@ from fastapi import (
     Query,
     WebSocket,
     WebSocketDisconnect,
+)
+from fastapi import (
     status as http_status,
 )
-from pydantic import BaseModel, Field
-
-from hermes_cli.plugins import PluginContext
 from hermes_cli import kanban_db as _kanban_db
+from hermes_cli.plugins import PluginContext
 from hermes_constants import get_default_hermes_root
+from pydantic import BaseModel
 
 log = logging.getLogger(__name__)
 
@@ -249,7 +251,7 @@ def _validate_channel_name(raw: str) -> str:
 def _insert_channel(
     slug: str,
     name: str,
-    description: Optional[str] = None,
+    description: str | None = None,
 ) -> dict[str, Any]:
     """Insert a channel into the shared Ágora DB and emit a ``created`` event.
 
@@ -304,7 +306,7 @@ def _db_path() -> Path:
         return get_default_hermes_root() / "agora.db"
 
 
-_db_init_path: Optional[Path] = None
+_db_init_path: Path | None = None
 
 
 def _init_db() -> None:
@@ -599,7 +601,7 @@ def _migrate_single_profile_db(
                 (str(source_path), source_table, source_id, target_id, now),
             )
 
-        def _already_migrated(source_table: str, source_id: int) -> Optional[int]:
+        def _already_migrated(source_table: str, source_id: int) -> int | None:
             row = target_conn.execute(
                 """SELECT target_id FROM agora_migration_log
                    WHERE source_path = ? AND source_table = ? AND source_id = ?""",
@@ -853,7 +855,7 @@ def _emit_event(
 # ---------------------------------------------------------------------------
 
 
-def _ws_upgrade_authorized(ws: "WebSocket") -> bool:
+def _ws_upgrade_authorized(ws: WebSocket) -> bool:
     """Delegate WebSocket auth to the dashboard's canonical gate.
 
     Falls back to accepting in test contexts where ``hermes_cli.web_server``
@@ -957,7 +959,7 @@ def _configured_profile_names() -> set[str]:
     return out
 
 
-def _load_agent_manifest(profile: str) -> Optional[dict[str, Any]]:
+def _load_agent_manifest(profile: str) -> dict[str, Any] | None:
     """Load optional per-agent summon config.
 
     Manifest format is intentionally permissive; unknown keys are ignored.
@@ -986,7 +988,7 @@ def _load_agent_manifest(profile: str) -> Optional[dict[str, Any]]:
         return None
 
 
-def _manifest_skills(profile: str, manifest: Optional[dict[str, Any]]) -> str:
+def _manifest_skills(profile: str, manifest: dict[str, Any] | None) -> str:
     """Resolve skills for spawned profile.
 
     Priority:
@@ -1006,7 +1008,7 @@ def _manifest_skills(profile: str, manifest: Optional[dict[str, Any]]) -> str:
     return "hermes-agent"
 
 
-def _manifest_workdir(manifest: Optional[dict[str, Any]]) -> Path:
+def _manifest_workdir(manifest: dict[str, Any] | None) -> Path:
     """Resolve spawn working directory with safe fallback."""
     default = get_default_hermes_root()
     if not isinstance(manifest, dict):
@@ -1020,7 +1022,7 @@ def _manifest_workdir(manifest: Optional[dict[str, Any]]) -> Path:
     return default
 
 
-def _manifest_env_exports(manifest: Optional[dict[str, Any]]) -> str:
+def _manifest_env_exports(manifest: dict[str, Any] | None) -> str:
     """Return shell exports from manifest.env (safe quoted), if any."""
     if not isinstance(manifest, dict):
         return ""
@@ -1063,7 +1065,7 @@ _AGORA_KNOWN_HANDOFF_PROFILES: list[str] = [
 ]
 
 
-def _resolve_handoff_mention(reason_or_summary: Optional[str]) -> str:
+def _resolve_handoff_mention(reason_or_summary: str | None) -> str:
     """Pick the profile that should be @-mentioned for a handoff.
 
     1. If the text already contains an explicit @mention of a known profile,
@@ -1095,8 +1097,8 @@ def _format_blocked_handoff(
     *,
     task_id: str,
     title: str,
-    assignee: Optional[str],
-    reason: Optional[str],
+    assignee: str | None,
+    reason: str | None,
     next_profile: str,
 ) -> str:
     """Build the human-readable blocked handoff posted to Ágora."""
@@ -1119,7 +1121,7 @@ def _post_system_message_to_channel(
     body: str,
     task_id: str,
     event_origin: str,
-) -> Optional[int]:
+) -> int | None:
     """Insert a system message from ``kanban`` into an Ágora channel.
 
     Returns the inserted message id, or ``None`` if the channel does not exist.
@@ -1174,10 +1176,10 @@ def _post_system_message_to_channel(
 def _on_kanban_task_blocked(
     *,
     task_id: str,
-    title: Optional[str] = None,
-    assignee: Optional[str] = None,
-    reason: Optional[str] = None,
-    blocked_at: Optional[int] = None,
+    title: str | None = None,
+    assignee: str | None = None,
+    reason: str | None = None,
+    blocked_at: int | None = None,
     **kwargs: Any,
 ) -> None:
     """Post a blocked handoff to Ágora and notify the next owner.
@@ -1255,11 +1257,11 @@ def _format_delivery_report(
     *,
     task_id: str,
     title: str,
-    assignee: Optional[str],
-    result: Optional[str],
-    summary: Optional[str],
-    metadata: Optional[dict],
-    verified_cards: Optional[list[str]] = None,
+    assignee: str | None,
+    result: str | None,
+    summary: str | None,
+    metadata: dict | None,
+    verified_cards: list[str] | None = None,
 ) -> str:
     """Build the human-readable completion report posted to Ágora."""
     lines = [
@@ -1344,14 +1346,14 @@ def _task_exists_in_any_board(task_id: str) -> bool:
 def _on_kanban_task_completed(
     *,
     task_id: str,
-    title: Optional[str] = None,
-    assignee: Optional[str] = None,
-    status: Optional[str] = None,
-    result: Optional[str] = None,
-    summary: Optional[str] = None,
-    metadata: Optional[dict] = None,
-    completed_at: Optional[int] = None,
-    verified_cards: Optional[list[str]] = None,
+    title: str | None = None,
+    assignee: str | None = None,
+    status: str | None = None,
+    result: str | None = None,
+    summary: str | None = None,
+    metadata: dict | None = None,
+    completed_at: int | None = None,
+    verified_cards: list[str] | None = None,
     **kwargs: Any,
 ) -> None:
     """Post a delivery report to Ágora and notify agent-techlead.
@@ -1615,7 +1617,7 @@ def _tmux_session_has_clients(session: str) -> bool:
         return False
 
 
-def _open_agent_tmux_terminal(profile: str, *, session: Optional[str] = None) -> dict[str, Any]:
+def _open_agent_tmux_terminal(profile: str, *, session: str | None = None) -> dict[str, Any]:
     """Open or focus a human-visible terminal attached to a tmux session.
 
     Default behavior opens the agent's canonical session (named after profile).
@@ -1762,7 +1764,7 @@ def _tmux_send_message(profile: str, message: str) -> dict[str, Any]:
     return {**ensure, "delivered": True}
 
 
-def _resolve_profile_pid(profile: str) -> Optional[int]:
+def _resolve_profile_pid(profile: str) -> int | None:
     """Return the PID of a visible Hermes process for ``profile``, if any.
 
     Discovery order:
@@ -1845,7 +1847,7 @@ def _resolve_profile_pid(profile: str) -> Optional[int]:
     return None
 
 
-def _pid_is_alive(pid: Optional[int]) -> bool:
+def _pid_is_alive(pid: int | None) -> bool:
     """Best-effort local liveness check for stored PID values."""
     if not isinstance(pid, int) or pid <= 0:
         return False
@@ -1860,8 +1862,8 @@ def _agent_state(
     conn: sqlite3.Connection,
     profile: str,
     *,
-    active_profiles: Optional[set[str]] = None,
-) -> Optional[str]:
+    active_profiles: set[str] | None = None,
+) -> str | None:
     row = conn.execute(
         "SELECT state FROM agora_agent_status WHERE profile = ?",
         (profile,),
@@ -1907,7 +1909,7 @@ def _kanban_active_profiles() -> set[str]:
         return set()
 
 
-def _kanban_active_worker(profile: str) -> Optional[dict[str, Any]]:
+def _kanban_active_worker(profile: str) -> dict[str, Any] | None:
     """Return the newest active Kanban worker row for a profile, if any."""
     if _kanban_db is None:
         return None
@@ -1958,7 +1960,12 @@ def _upsert_worker_status(conn: sqlite3.Connection, profile: str, worker: dict[s
     task_title = worker.get("task_title")
     heartbeat = worker.get("last_heartbeat_at") or now
     current_step = f"run {run_id}" if run_id else None
-    metadata = {"source": "kanban-worker", "run_id": run_id, "task_id": task_id}
+    metadata = {
+        "source": "kanban-worker",
+        "run_id": run_id,
+        "task_id": task_id,
+        "gateway_worker_pid": worker_pid,
+    }
     conn.execute(
         """
         INSERT INTO agora_agent_status
@@ -1988,7 +1995,7 @@ def _upsert_worker_status(conn: sqlite3.Connection, profile: str, worker: dict[s
     )
 
 
-def _wrap_tmux_delivery_for_agent_state(state: Optional[str], message: str) -> tuple[str, str]:
+def _wrap_tmux_delivery_for_agent_state(state: str | None, message: str) -> tuple[str, str]:
     """Return (mode, message) for delivering a mention to a worker tmux.
 
     Idle workers can receive the mention as a normal prompt. Non-idle workers
@@ -2008,7 +2015,7 @@ def _deliver_mentions_to_tmux(
     message_id: int,
     channel_slug: str,
     body: str,
-    author_profile: Optional[str],
+    author_profile: str | None,
 ) -> list[dict[str, Any]]:
     """Actively deliver mentions to local visible agent terminals."""
     if not _tmux_wake_enabled():
@@ -2047,8 +2054,8 @@ def _deliver_mentions_to_tmux(
 def _quoted_char_indexes(body: str) -> set[int]:
     """Return character positions that are inside simple quoted/code spans."""
     quoted: set[int] = set()
-    quote: Optional[str] = None
-    start: Optional[int] = None
+    quote: str | None = None
+    start: int | None = None
     escaped = False
     for idx, ch in enumerate(body):
         if escaped:
@@ -2106,27 +2113,30 @@ def _valid_recipient_profiles(conn: sqlite3.Connection) -> set[str]:
 def _resolve_recipients(conn: sqlite3.Connection, mentions: list[str]) -> set[str]:
     """Resolve mentions to concrete recipients.
 
-    * @all and @todos expand to every profile currently present in
-      ``agora_agent_status``.
-    * Individual handles are kept only when they name a known Ágora handoff
-      profile or a profile that has checked in via agent status. This avoids
-      creating notifications for literal/documentation placeholders such as
-      ``@perfil`` or ``@fallback``.
+    * @all and @todos expand to the configured roster (fallback: agent_status).
+    * Individual handles must be in roster or known handoff/active profiles.
+    * Blocked placeholder handles never become recipients.
     """
+    from agora.ops.mailbox import normalize_recipient, roster_set
+
     recipients: set[str] = set()
     broadcast = False
-    valid_profiles = {p.lower() for p in _valid_recipient_profiles(conn)}
+    roster = roster_set()
+    valid = set(_valid_recipient_profiles(conn)) | roster
     for handle in mentions:
         lower_handle = handle.lower()
         if lower_handle in _BROADCAST_HANDLES:
             broadcast = True
-        elif lower_handle in valid_profiles:
-            recipients.add(handle)
+            continue
+        norm = normalize_recipient(handle, valid)
+        if norm:
+            recipients.add(norm)
     if broadcast:
-        rows = conn.execute(
+        # Prefer configured roster for @all; fall back to checked-in profiles.
+        base = roster or {r["profile"] for r in conn.execute(
             "SELECT DISTINCT profile FROM agora_agent_status"
-        ).fetchall()
-        recipients.update(r["profile"] for r in rows)
+        ).fetchall() if r["profile"]}
+        recipients.update(base)
     return recipients
 
 
@@ -2136,7 +2146,7 @@ def _create_notifications(
     channel_id: int,
     channel_slug: str,
     body: str,
-    author_profile: Optional[str],
+    author_profile: str | None,
 ) -> list[int]:
     """Persist notifications for any mentions in the message body.
 
@@ -2220,6 +2230,9 @@ def _create_notifications(
 
 
 def _agent_status_dict(row: sqlite3.Row) -> dict[str, Any]:
+    meta: dict[str, Any] = (
+        json.loads(row["metadata_json"]) if row["metadata_json"] else {}
+    )
     return {
         "profile": row["profile"],
         "state": row["state"],
@@ -2229,7 +2242,9 @@ def _agent_status_dict(row: sqlite3.Row) -> dict[str, Any]:
         "last_heartbeat_at": row["last_heartbeat_at"],
         "pid": row["pid"],
         "run_id": row["run_id"],
-        "metadata": json.loads(row["metadata_json"]) if row["metadata_json"] else None,
+        "gateway_worker_pid": meta.get("gateway_worker_pid"),
+        "tmux_pane_pid": row["pid"],
+        "metadata": meta or None,
     }
 
 
@@ -2272,7 +2287,7 @@ def list_channels():
 class CreateChannelBody(BaseModel):
     slug: str
     name: str
-    description: Optional[str] = None
+    description: str | None = None
 
 
 @router.post("/channels")
@@ -2365,9 +2380,9 @@ def get_channel(slug: str):
 @router.get("/channels/{slug}/messages")
 def list_channel_messages(
     slug: str,
-    thread_id: Optional[int] = Query(None),
-    since_id: Optional[int] = Query(None),
-    before_id: Optional[int] = Query(None),
+    thread_id: int | None = Query(None),
+    since_id: int | None = Query(None),
+    before_id: int | None = Query(None),
     limit: int = Query(100, ge=1, le=500),
 ):
     """Return messages for a channel, optionally filtered by thread.
@@ -2427,9 +2442,9 @@ def list_channel_messages(
 class CreateMessageBody(BaseModel):
     body: str
     author_type: str = "human"
-    author_profile: Optional[str] = None
-    thread_id: Optional[int] = None
-    linked_task_id: Optional[str] = None
+    author_profile: str | None = None
+    thread_id: int | None = None
+    linked_task_id: str | None = None
 
 
 @router.post("/channels/{slug}/messages")
@@ -2509,7 +2524,34 @@ def create_channel_message(slug: str, payload: CreateMessageBody):
         row = conn.execute(
             "SELECT * FROM agora_messages WHERE id = ?", (cur.lastrowid,)
         ).fetchone()
-        return {"message": _message_dict(row)}
+        message = _message_dict(row)
+
+    sprint = None
+    # Human posts on #praca that look like implementation requests auto-compile
+    # a sprint skeleton for the techlead/workers (Fase 1.5).
+    if (
+        slug == "praca"
+        and author_type == "human"
+        and message.get("id") is not None
+    ):
+        try:
+            from agora.ops.sprint import compile_sprint_from_message, looks_like_sprint_request
+
+            if looks_like_sprint_request(body):
+                sprint = compile_sprint_from_message(
+                    body=body,
+                    author=author_profile or "human",
+                    source_message_id=int(message["id"]),
+                    dry_run=False,
+                )
+        except Exception:
+            log.exception("auto sprint compile failed")
+            sprint = {"ok": False, "error": "auto-compile-failed"}
+
+    out = {"message": message}
+    if sprint is not None:
+        out["sprint"] = sprint
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -2518,7 +2560,7 @@ def create_channel_message(slug: str, payload: CreateMessageBody):
 
 
 @router.get("/threads")
-def list_threads(channel_id: Optional[int] = Query(None)):
+def list_threads(channel_id: int | None = Query(None)):
     """List threads, optionally filtered by channel."""
     with _connect() as conn:
         conditions: list[str] = []
@@ -2537,7 +2579,7 @@ def list_threads(channel_id: Optional[int] = Query(None)):
 class CreateThreadBody(BaseModel):
     channel_id: int
     title: str
-    linked_task_id: Optional[str] = None
+    linked_task_id: str | None = None
 
 
 @router.post("/threads")
@@ -2597,8 +2639,8 @@ def get_thread(thread_id: int):
 
 
 class UpdateThreadBody(BaseModel):
-    status: Optional[str] = None
-    linked_task_id: Optional[str] = None
+    status: str | None = None
+    linked_task_id: str | None = None
 
 
 @router.patch("/threads/{thread_id}")
@@ -2769,12 +2811,12 @@ def list_agent_status():
 
 class AgentStatusBody(BaseModel):
     state: str
-    current_task_id: Optional[str] = None
-    current_step: Optional[str] = None
-    status_text: Optional[str] = None
-    pid: Optional[int] = None
-    run_id: Optional[int] = None
-    metadata: Optional[dict[str, Any]] = None
+    current_task_id: str | None = None
+    current_step: str | None = None
+    status_text: str | None = None
+    pid: int | None = None
+    run_id: int | None = None
+    metadata: dict[str, Any] | None = None
 
 
 @router.post("/agents/status/{profile}")
@@ -2876,7 +2918,7 @@ def get_agent_status(profile: str):
 class SummonAgentBody(BaseModel):
     open_terminal: bool = True
     state: str = "working"
-    status_text: Optional[str] = "summoned; aguardando instruções"
+    status_text: str | None = "summoned; aguardando instruções"
 
 
 @router.post("/agents/{profile}/summon")
@@ -2963,25 +3005,26 @@ def summon_agent(profile: str, payload: SummonAgentBody):
 def open_agent_terminal(
     profile: str,
     target: str = Query(
-        "profile-session",
-        description="terminal target: profile-session (default), kanban-tail, or auto",
+        "auto",
+        description="terminal target: auto (default), kanban-tail, or profile-session",
     ),
 ):
-    """Open a human-visible tmux terminal for an agent.
+    """Open the agent's live runtime surface.
 
-    Defaults to the profile's interactive session so clicking PID opens the
-    actual agent terminal (not a tail/log session).
+    Default ``auto`` prefers the active Kanban worker stream/tail (PID of the
+    work being done). Falls back to the profile interactive session only when
+    no worker is active.
 
     Targets:
-    - profile-session: open/focus canonical profile tmux session
-    - kanban-tail: open/focus telemetry tail session for active worker
-    - auto: keep legacy behavior (prefer kanban-tail when worker is active)
+    - auto: worker tail when active, else profile session
+    - kanban-tail: force telemetry tail for active worker
+    - profile-session: force profile interactive tmux session
     """
     profile = profile.strip()
     if not profile:
         raise HTTPException(status_code=400, detail="profile is required")
 
-    target_norm = (target or "profile-session").strip().lower()
+    target_norm = (target or "auto").strip().lower()
     if target_norm not in {"profile-session", "kanban-tail", "auto"}:
         raise HTTPException(
             status_code=400,
@@ -3022,13 +3065,188 @@ def open_agent_terminal(
     return {"ok": True, "terminal": result, "telemetry": {"mode": "profile-session"}}
 
 
+
+# ---------------------------------------------------------------------------
+# Fase 1.5 — live stream, mailbox, sprint, PO watch, completion gates
+# ---------------------------------------------------------------------------
+
+
+@router.get("/agents/{profile}/stream")
+def agent_live_stream(
+    profile: str,
+    task_id: str | None = Query(None),
+    offset: int = Query(0, ge=0),
+    max_bytes: int = Query(64000, ge=1024, le=512000),
+):
+    """Tail the agent live log (kanban worker preferred)."""
+    from agora.ops.stream import read_stream_tail
+
+    profile = profile.strip()
+    worker = _kanban_active_worker(profile)
+    return read_stream_tail(
+        profile,
+        task_id=task_id,
+        worker=worker,
+        offset=offset,
+        max_bytes=max_bytes,
+    )
+
+
+@router.get("/agents/{profile}/stream/meta")
+def agent_live_stream_meta(profile: str, task_id: str | None = Query(None)):
+    from agora.ops.stream import resolve_agent_stream
+
+    profile = profile.strip()
+    worker = _kanban_active_worker(profile)
+    return resolve_agent_stream(profile, task_id=task_id, worker=worker)
+
+
+@router.post("/mailbox/cleanup")
+def mailbox_cleanup():
+    """Delete notifications with invalid recipients (hygiene)."""
+    from agora.ops.mailbox import cleanup_invalid_notifications
+
+    with _connect() as conn:
+        return cleanup_invalid_notifications(conn)
+
+
+@router.get("/mailbox/{profile}/unread")
+def mailbox_unread(profile: str, limit: int = Query(50, ge=1, le=200)):
+    from agora.ops.mailbox import build_mailbox_action_brief, list_unread
+
+    profile = profile.strip()
+    with _connect() as conn:
+        unread = list_unread(conn, profile, limit=limit)
+    return {
+        "profile": profile,
+        "count": len(unread),
+        "unread": unread,
+        "action_brief": build_mailbox_action_brief(profile, unread),
+    }
+
+
+@router.post("/mailbox/{profile}/process")
+def mailbox_process(profile: str, mark_read: bool = Query(True)):
+    """Return unread brief and optionally mark them read after handoff to agent.
+
+    Does not itself run the agent model; it prepares the action brief and can
+    wake the profile tmux with the brief so the interactive agent acts.
+    """
+    from agora.ops.mailbox import build_mailbox_action_brief, list_unread, mark_notification_read
+
+    profile = profile.strip()
+    with _connect() as conn:
+        unread = list_unread(conn, profile, limit=50)
+        brief = build_mailbox_action_brief(profile, unread)
+        marked = []
+        if mark_read:
+            for n in unread:
+                if mark_notification_read(conn, int(n["id"])):
+                    marked.append(int(n["id"]))
+    # best-effort wake with brief
+    delivery = None
+    try:
+        delivery = _tmux_send_message(profile, brief)
+    except Exception as exc:
+        delivery = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    return {
+        "profile": profile,
+        "unread_count": len(unread),
+        "marked_read": marked,
+        "action_brief": brief,
+        "delivery": delivery,
+    }
+
+
+class SprintCompileBody(BaseModel):
+    body: str = Field(..., min_length=8)
+    author: str = "human"
+    source_message_id: int | None = None
+    workspace: str = "/home/felipi/workspace/hermes-agora"
+    dry_run: bool = False
+
+
+@router.post("/sprint/compile")
+def sprint_compile(payload: SprintCompileBody):
+    """Compile a praça desire into kanban cards + vault briefings."""
+    from agora.ops.sprint import compile_sprint_from_message, looks_like_sprint_request
+
+    if not looks_like_sprint_request(payload.body) and not payload.dry_run:
+        # still allow explicit compile from UI/techlead tools
+        pass
+    result = compile_sprint_from_message(
+        body=payload.body,
+        author=payload.author,
+        source_message_id=payload.source_message_id,
+        workspace=payload.workspace,
+        dry_run=payload.dry_run,
+    )
+    # announce on praça
+    try:
+        if result.get("ok") and not payload.dry_run:
+            created_ids = []
+            for c in result.get("created") or []:
+                rid = (c.get("result") or {}).get("id")
+                if rid:
+                    created_ids.append(str(rid))
+            msg = (
+                f"@agent-techlead sprint compilada a partir da praça "
+                f"(author={payload.author}). Cards: {', '.join(created_ids) or 'n/a'}. "
+                f"Briefings: {len(result.get('briefings') or [])}."
+            )
+            create_channel_message(
+                "praca",
+                CreateMessageBody(
+                    body=msg,
+                    author_type="system",
+                    author_profile="agora",
+                ),
+            )
+    except Exception:
+        log.exception("sprint compile praça announce failed")
+    return result
+
+
+@router.get("/po/watch")
+def po_watch(board: str = Query("agora"), stale_seconds: int = Query(900, ge=60)):
+    from agora.ops.po_watch import inspect_board
+
+    return inspect_board(board, stale_seconds=stale_seconds)
+
+
+@router.post("/po/watch/publish")
+def po_watch_publish(board: str = Query("agora"), stale_seconds: int = Query(900, ge=60)):
+    """Inspect board and post to #planejamento only when unhealthy."""
+    from agora.ops.po_watch import inspect_board
+
+    report = inspect_board(board, stale_seconds=stale_seconds)
+    published = False
+    message = None
+    if report.get("ok") and not report.get("healthy"):
+        body = (report.get("report") or "") + "\n\n@agent-techlead PO flag: há gargalo no board."
+        message = create_channel_message(
+            "planejamento",
+            CreateMessageBody(body=body, author_type="agent", author_profile="agent-po"),
+        )
+        published = True
+    return {"report": report, "published": published, "message": message}
+
+
+@router.get("/gates/complete/{task_id}")
+def complete_gate(task_id: str):
+    from agora.ops.gates import evaluate_complete_gate
+
+    return evaluate_complete_gate(task_id)
+
+
+
 # ---------------------------------------------------------------------------
 # Decisions
 # ---------------------------------------------------------------------------
 
 
 @router.get("/decisions")
-def list_decisions(thread_id: Optional[int] = Query(None)):
+def list_decisions(thread_id: int | None = Query(None)):
     """List decisions, optionally filtered by thread."""
     with _connect() as conn:
         if thread_id is not None:
@@ -3047,8 +3265,8 @@ class CreateDecisionBody(BaseModel):
     thread_id: int
     proposal: str
     decision: str
-    rationale: Optional[str] = None
-    decided_by: Optional[str] = None
+    rationale: str | None = None
+    decided_by: str | None = None
 
 
 @router.post("/decisions")
@@ -3105,7 +3323,7 @@ def create_decision(payload: CreateDecisionBody):
 
 @router.get("/events")
 def list_events(
-    since_id: Optional[int] = Query(0), limit: int = Query(200, ge=1, le=500)
+    since_id: int | None = Query(0), limit: int = Query(200, ge=1, le=500)
 ):
     """Return append-only events newer than ``since_id``.
 
@@ -3183,8 +3401,8 @@ async def stream_events(ws: WebSocket):
 def list_notifications(
     recipient: str,
     unread_only: bool = Query(False),
-    since_id: Optional[int] = Query(None),
-    before_id: Optional[int] = Query(None),
+    since_id: int | None = Query(None),
+    before_id: int | None = Query(None),
     limit: int = Query(100, ge=1, le=500),
 ):
     """Return a recipient's notifications, newest first.
@@ -3288,7 +3506,7 @@ def _format_profile_circuit_open_report(
     threshold: int,
     task_ids: list[str],
     opened_at: int,
-    telemetry: Optional[dict[str, Any]] = None,
+    telemetry: dict[str, Any] | None = None,
 ) -> str:
     """Build the human-readable incident report posted to #incidentes."""
     tel = telemetry or {}
@@ -3318,7 +3536,7 @@ def _on_kanban_profile_circuit_open(
     task_ids: list[str],
     threshold: int,
     opened_at: int,
-    telemetry: Optional[dict[str, Any]] = None,
+    telemetry: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> None:
     """Post a profile circuit-open alert to #incidentes.

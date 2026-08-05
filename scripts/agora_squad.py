@@ -22,25 +22,34 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import yaml
-from agora.squads import list_squads, show_squad, check_min_context_window, DEFAULT_CONTEXT_LENGTHS
+
 from agora.config import load_agora_config
+from agora.squads import DEFAULT_CONTEXT_LENGTHS, check_min_context_window, list_squads, show_squad
 
 try:
-    from hermes_constants import get_hermes_home
+    from hermes_constants import get_default_hermes_root, get_hermes_home
 except Exception:
     def get_hermes_home():
         return Path.home() / ".hermes"
 
+    def get_default_hermes_root():
+        return Path.home() / ".hermes"
+
+
+def _hermes_root() -> Path:
+    """Return the base .hermes directory (not profile-scoped)."""
+    return get_default_hermes_root()
+
 
 def _cfg_path() -> Path:
-    return get_hermes_home() / "config.yaml"
+    return _hermes_root() / "config.yaml"
 
 
 def cmd_use(name: str) -> None:
     data = list_squads()
     key = name.strip().lower()
     if key not in (data.get("squads") or {}):
-        raise SystemExit(f"unknown squad: {name}. known={list((data.get('squads') or {}))}")
+        raise SystemExit(f"unknown squad: {name}. known={list(data.get('squads') or {})}")
     path = _cfg_path()
     cfg = yaml.safe_load(path.read_text()) if path.exists() else {}
     plugins = cfg.get("plugins") if isinstance(cfg.get("plugins"), dict) else {}
@@ -53,7 +62,6 @@ def cmd_use(name: str) -> None:
 
 
 def cmd_check(name: str) -> None:
-    import json
     result = check_min_context_window(name)
     if result["ok"]:
         print(f"Squad '{name}': PASS (all models >= min_context_window)")
@@ -90,7 +98,7 @@ def cmd_apply(name: str) -> None:
 
     min_ctx = cfg.get("min_context_window", 200_000)
     stamp = time.strftime("%Y%m%d%H%M%S")
-    home = get_hermes_home()
+    home = _hermes_root()
 
     for role, spec in squad.items():
         profile_name = roster.get(role)

@@ -395,7 +395,7 @@
     );
   }
 
-  function AgentCard({ agent, worker, unreadCount, notifications, notificationsOpen, loadingNotifications, hasMoreNotifications, loadingOlderNotifications, openingTerminal, onOpenTerminal, onSummon, onToggleNotifications, onMarkRead, onMarkAllRead, onScrollNotifications }) {
+  function AgentCard({ agent, worker, unreadCount, notifications, notificationsOpen, loadingNotifications, hasMoreNotifications, loadingOlderNotifications, openingTerminal, onOpenTerminal, onOpenStream, onSummon, onToggleNotifications, onMarkRead, onMarkAllRead, onScrollNotifications }) {
     // Authoritative state derivation — no hybrid state leaks:
     // 1) an active Kanban worker always renders as 'working' with live telemetry;
     // 2) otherwise use the semantic agent.state;
@@ -403,7 +403,14 @@
     const active = !!(worker && worker.worker_pid);
     const taskId = active ? (worker.task_id || null) : (agent.current_task_id || null);
     const runId = active ? (worker.run_id || null) : (agent.run_id || null);
-    const pid = active ? worker.worker_pid : (agent.pid || null);
+    // Authoritative PID order: live Kanban worker PID (gateway), then stored
+    // gateway_worker_pid from heartbeat metadata, then the tmux pane PID
+    // recorded by summon/status for debug/fallback.
+    const gatewayPid = active
+      ? worker.worker_pid
+      : (agent.gateway_worker_pid || null);
+    const tmuxPid = active ? null : (agent.tmux_pane_pid || agent.pid || null);
+    const pid = gatewayPid || tmuxPid || null;
     const heartbeat = active
       ? (worker.last_heartbeat_at || agent.last_heartbeat_at || null)
       : (agent.last_heartbeat_at || null);
@@ -491,8 +498,12 @@
           pid && h("span", null, "pid ", h("button", {
             type: "button",
             className: "agora-agent-pid-btn",
-            title: `Abrir terminal tmux de ${agent.profile}`,
-            "aria-label": `Abrir terminal tmux de ${agent.profile}`,
+            title: gatewayPid
+              ? `Abrir terminal do worker Kanban de ${agent.profile} (PID ${pid})`
+              : `Abrir terminal tmux de ${agent.profile} (PID ${pid})`,
+            "aria-label": gatewayPid
+              ? `Abrir terminal do worker Kanban de ${agent.profile}`
+              : `Abrir terminal tmux de ${agent.profile}`,
             disabled: openingTerminal,
             onClick: function (e) {
               e.preventDefault();
@@ -500,6 +511,17 @@
               onOpenTerminal(agent.profile);
             },
           }, h("code", null, pid))),
+          h("button", {
+            type: "button",
+            className: "agora-agent-pid-btn",
+            style: { marginLeft: 8 },
+            title: `Abrir live stream de ${agent.profile}`,
+            onClick: function (e) {
+              e.preventDefault();
+              e.stopPropagation();
+              onOpenStream && onOpenStream(agent.profile);
+            },
+          }, "stream"),
         ),
         !pid && h("div", { className: "agora-agent-meta" },
           h(Button, {
@@ -1776,10 +1798,75 @@
         });
     }, [t]);
 
+    const [liveStream, setLiveStream] = useState(null);
+    const [liveStreamLoading, setLiveStreamLoading] = useState(false);
+
+    
+    const liveStreamModal = liveStream && h("div", {
+      className: "agora-stream-modal",
+      style: {
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 9999,
+        display: "flex", alignItems: "center", justifyContent: "center"
+      },
+      onClick: function () { setLiveStream(null); }
+    },
+      h("div", {
+        style: {
+          width: "min(960px, 92vw)", height: "min(70vh, 720px)", background: "#0f1419",
+          color: "#d7dde5", border: "1px solid #2a3340", borderRadius: 12, padding: 12,
+          display: "flex", flexDirection: "column", gap: 8
+        },
+        onClick: function (e) { e.stopPropagation(); }
+      },
+        h("div", { style: { display: "flex", justifyContent: "space-between", gap: 8 } },
+          h("strong", null, "Live stream · ", liveStream.profile, liveStream.task_id ? (" · " + liveStream.task_id) : ""),
+          h("button", { type: "button", onClick: function () { setLiveStream(null); } }, "fechar")
+        ),
+        h("div", { style: { fontSize: 12, opacity: 0.75 } },
+          "mode=", String(liveStream.mode || "?"),
+          liveStream.worker_pid ? (" · pid " + liveStream.worker_pid) : "",
+          liveStreamLoading ? " · loading…" : ""
+        ),
+        h("pre", {
+          style: {
+            margin: 0, flex: 1, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word",
+            background: "#0a0e13", padding: 10, borderRadius: 8, fontSize: 12, lineHeight: 1.4
+          }
+        }, liveStream.text || "(sem saída ainda)")
+      )
+    );
+
+    const handleOpenStream = useCallback(function (profile) {
+      setLiveStreamLoading(true);
+      setLiveStream({ profile: profile, text: "", next_offset: 0, mode: "loading" });
+      function pull(offset) {
+        const q = offset ? `?offset=${offset}` : "";
+        return SDK.fetchJSON(`${API_AGORA}/agents/${encodeURIComponent(profile)}/stream${q}`)
+          .then(function (data) {
+            setLiveStream(function (prev) {
+              const base = prev && prev.profile === profile ? prev : { profile: profile, text: "" };
+              const add = (data && data.text) || "";
+              return Object.assign({}, base, data || {}, {
+                text: (offset ? (base.text || "") : "") + add,
+              });
+            });
+            // soft follow a few times
+            if (data && data.eof === false && offset < 5) {
+              setTimeout(function () { pull(data.next_offset || 0); }, 1500);
+            }
+          })
+          .catch(function (err) {
+            setError(tx(t, "streamError", "Erro ao carregar stream de ") + profile + ": " + parseApiError(err));
+          })
+          .finally(function () { setLiveStreamLoading(false); });
+      }
+      pull(0);
+    }, [t]);
+
     const handleOpenTerminal = useCallback(function (profile) {
       if (openingTerminal) return;
       setOpeningTerminal(profile);
-      SDK.fetchJSON(`${API_AGORA}/agents/${encodeURIComponent(profile)}/open-terminal?target=profile-session`, {
+      SDK.fetchJSON(`${API_AGORA}/agents/${encodeURIComponent(profile)}/open-terminal?target=auto`, {
         method: "POST",
       })
         .then(function (data) {
@@ -2011,7 +2098,7 @@
         ),
       ),
 
-      error && h("div", { className: "agora-banner agora-banner--error" },
+      liveStreamModal, error && h("div", { className: "agora-banner agora-banner--error" },
         h("span", null, error),
         h(Button, { size: "sm", variant: "outline", onClick: function () { setError(null); } }, "×"),
       ),
@@ -2182,7 +2269,7 @@
                               hasMoreNotifications: hasMoreNotifications[profile] !== false,
                               loadingOlderNotifications: !!loadingOlderNotifications[profile],
                               openingTerminal: openingTerminal,
-                              onOpenTerminal: handleOpenTerminal,
+                              onOpenTerminal: handleOpenTerminal, onOpenStream: handleOpenStream,
                               onSummon: handleSummonAgent,
                               onToggleNotifications: function () { toggleNotifications(profile); },
                               onMarkRead: function (id) { markNotificationRead(profile, id); },
