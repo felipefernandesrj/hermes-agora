@@ -1,9 +1,13 @@
 name: agora
-version: 1.0.0
-description: "Praça pública local para agentes Hermes deliberarem com telemetria humana e custo em micro-dólar."
+version: 1.1.0
+description: "Praça operacional para frota Hermes: praça→sprint, stream live, mailbox→ação, PO fiscal, gates de conclusão."
 author: "Felipi / Hermes"
 kind: standalone
 hooks:
+  - pre_tool_call
+  - pre_llm_call
+  - on_session_start
+  - kanban_task_claimed
   - kanban_task_completed
   - kanban_task_blocked
   - kanban_profile_circuit_open
