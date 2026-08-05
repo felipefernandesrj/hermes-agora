@@ -332,6 +332,8 @@ def _init_db() -> None:
                 name TEXT NOT NULL,
                 description TEXT,
                 archived INTEGER NOT NULL DEFAULT 0,
+                pinned INTEGER NOT NULL DEFAULT 0,
+                protected INTEGER NOT NULL DEFAULT 0,
                 created_at INTEGER NOT NULL
             );
 
@@ -443,6 +445,14 @@ def _init_db() -> None:
                     (ch["slug"], ch["name"], ch["description"], now),
                 )
 
+        # Migration: add `protected` column to legacy databases that predate
+        # it, then mark the four governance channels as protected + pinned.
+        _migrate_protected_column(conn)
+        conn.execute(
+            "UPDATE agora_channels SET protected = 1, pinned = 1 "
+            "WHERE slug IN ('praca', 'planejamento', 'decisoes', 'incidentes')"
+        )
+
         # Remove any stale rows for pseudo-profiles (human, system, etc.) that
         # may have been written before the reserved-profile guard existed.
         if RESERVED_AGENT_PROFILES:
@@ -460,6 +470,20 @@ def _init_db() -> None:
         _db_init_path = current
     finally:
         conn.close()
+
+
+def _migrate_protected_column(conn: sqlite3.Connection) -> None:
+    """Add the ``protected`` column to legacy databases that predate it.
+
+    SQLite's ``ALTER TABLE ... ADD COLUMN`` is idempotent-safe via a
+    pragma check — we inspect the existing columns and only add when
+    ``protected`` is missing.
+    """
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(agora_channels)")}
+    if "protected" not in cols:
+        conn.execute(
+            "ALTER TABLE agora_channels ADD COLUMN protected INTEGER NOT NULL DEFAULT 0"
+        )
 
 
 def _cleanup_emptyname_channel(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -875,12 +899,15 @@ def _ws_upgrade_authorized(ws: WebSocket) -> bool:
 
 
 def _channel_dict(row: sqlite3.Row) -> dict[str, Any]:
+    keys = row.keys()
     return {
         "id": row["id"],
         "slug": row["slug"],
         "name": row["name"],
         "description": row["description"],
-        "archived": bool(row["archived"]) if "archived" in row else False,
+        "archived": bool(row["archived"]) if "archived" in keys else False,
+        "pinned": bool(row["pinned"]) if "pinned" in keys else False,
+        "protected": bool(row["protected"]) if "protected" in keys else False,
         "created_at": row["created_at"],
     }
 
@@ -1228,12 +1255,33 @@ def _on_kanban_task_blocked(
             reason=reason,
             next_profile=next_profile,
         )
+        # Keep legacy handoff channel post (often #praca).
         _post_system_message_to_channel(
             channel_slug=_AGORA_HANDOFF_NOTIFY_CHANNEL,
             body=body,
             task_id=task_id,
             event_origin="kanban_task_blocked",
         )
+        # Immediate PO escalation (do not wait for 15m cron).
+        try:
+            from agora.ops.flow_comms import format_po_block_alert
+
+            po_body = format_po_block_alert(
+                task_id=task_id,
+                title=title or "(sem título)",
+                assignee=assignee,
+                reason=reason,
+            )
+            # Always illuminate flow on #planejamento and human-visible #praca.
+            for slug in ("planejamento", "praca"):
+                _post_system_message_to_channel(
+                    channel_slug=slug,
+                    body=po_body,
+                    task_id=task_id,
+                    event_origin="po_block_alert",
+                )
+        except Exception:
+            log.exception("PO block alert failed for %s", task_id)
 
         # Sync: a blocked task is no longer actively worked by its assignee.
         # Clear stale run/task fields from agora_agent_status unless the profile
@@ -1266,35 +1314,17 @@ def _format_delivery_report(
     verified_cards: list[str] | None = None,
 ) -> str:
     """Build the human-readable completion report posted to Ágora."""
-    lines = [
-        "@agent-techlead entrega concluída:",
-        "",
-        f"**{title}** ({task_id})",
-        f"Assignee: {assignee or 'não atribuído'}",
-        "Status: done",
-    ]
-    report = (summary or result or "").strip()
-    if report:
-        lines.extend(["", "Relatório de entrega:", report])
-    else:
-        lines.extend(["", "⚠️ Nenhum relatório de entrega foi fornecido."])
+    from agora.ops.flow_comms import extract_artifacts, format_delivery_announce
 
-    if verified_cards:
-        lines.extend(["", "Cards criados:"])
-        lines.extend(f"- {c}" for c in verified_cards)
-
-    artifacts: list[str] = []
-    if isinstance(metadata, dict):
-        raw = metadata.get("artifacts")
-        if isinstance(raw, (list, tuple)):
-            artifacts = [
-                str(a).strip() for a in raw if isinstance(a, str) and str(a).strip()
-            ]
-    if artifacts:
-        lines.extend(["", "Artifacts:"])
-        lines.extend(f"- {a}" for a in artifacts)
-
-    return "\n".join(lines)
+    return format_delivery_announce(
+        task_id=task_id,
+        title=title,
+        assignee=assignee,
+        summary=summary,
+        result=result,
+        verified_cards=list(verified_cards or []) or None,
+        artifacts=extract_artifacts(metadata) or None,
+    )
 
 
 def _task_exists_in_any_board(task_id: str) -> bool:
@@ -1450,6 +1480,36 @@ def _on_kanban_task_completed(
                 author_profile="kanban",
             )
             conn.commit()
+
+        # Explicit PO → QA request on #praca (human-visible test loop).
+        try:
+            from agora.ops.flow_comms import format_po_qa_request
+
+            qa_body = format_po_qa_request(
+                task_id=task_id,
+                title=title or "(sem título)",
+                implementer=assignee,
+                summary=summary or result,
+            )
+            # Prefer praca for QA visibility even if completion notify channel differs.
+            if channel_slug != "praca":
+                _post_system_message_to_channel(
+                    channel_slug="praca",
+                    body=qa_body,
+                    task_id=task_id,
+                    event_origin="po_qa_request",
+                )
+            else:
+                # already posted delivery on praca; add dedicated QA ask as second message
+                _post_system_message_to_channel(
+                    channel_slug="praca",
+                    body=qa_body,
+                    task_id=task_id,
+                    event_origin="po_qa_request",
+                )
+        except Exception:
+            log.exception("PO QA request failed for %s", task_id)
+
 
         # Sync: a completed task is conceptually idle for its assignee. Clear
         # stale run/task fields from agora_agent_status so the dashboard doesn't
@@ -2280,9 +2340,15 @@ def _event_dict(row: sqlite3.Row) -> dict[str, Any]:
 
 @router.get("/channels")
 def list_channels():
-    """List all channels, including defaults."""
+    """List all channels, including defaults.
+
+    Channels are ordered by ``pinned DESC, id ASC`` so that pinned
+    channels appear at the top, followed by the rest in creation order.
+    """
     with _connect() as conn:
-        rows = conn.execute("SELECT * FROM agora_channels ORDER BY id").fetchall()
+        rows = conn.execute(
+            "SELECT * FROM agora_channels ORDER BY pinned DESC, id ASC"
+        ).fetchall()
         return {"channels": [_channel_dict(r) for r in rows]}
 
 
@@ -2358,6 +2424,8 @@ _DEFAULT_CHANNEL_SLUGS = frozenset(
 class UpdateChannelBody(BaseModel):
     name: str | None = None
     description: str | None = None
+    archived: bool | None = None
+    pinned: bool | None = None
 
 
 @router.patch("/admin/channels/{slug}")
@@ -2391,11 +2459,13 @@ def admin_update_channel(slug: str, payload: UpdateChannelBody):
         updates["name"] = _validate_channel_name(payload.name)
     if payload.description is not None:
         updates["description"] = payload.description.strip()
+    if payload.pinned is not None:
+        updates["pinned"] = 1 if payload.pinned else 0
 
     if not updates:
         raise HTTPException(
             status_code=400,
-            detail="at least one field (name or description) must be provided",
+            detail="at least one field (name, description or pinned) must be provided",
         )
 
     with _connect() as conn:
@@ -2556,13 +2626,16 @@ def update_channel(slug: str, payload: UpdateChannelBody):
             )
         fields.append("archived = ?")
         values.append(1 if payload.archived else 0)
+    if payload.pinned is not None:
+        fields.append("pinned = ?")
+        values.append(1 if payload.pinned else 0)
 
     if not fields:
         raise HTTPException(status_code=400, detail="no fields to update")
 
     with _connect() as conn:
         row = conn.execute(
-            "SELECT id FROM agora_channels WHERE slug = ?", (slug,)
+            "SELECT id, name FROM agora_channels WHERE slug = ?", (slug,)
         ).fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail=f"channel '{slug}' not found")
@@ -2571,7 +2644,15 @@ def update_channel(slug: str, payload: UpdateChannelBody):
             f"UPDATE agora_channels SET {', '.join(fields)} WHERE slug = ?",
             values,
         )
-        _emit_event(conn, "channel", str(row["id"]), "updated", {"slug": slug})
+        # Emit a specific event when the channel is renamed.
+        new_name = payload.name.strip() if payload.name is not None else None
+        renamed = new_name is not None and new_name != row["name"]
+        event_type = "renamed" if renamed else "updated"
+        event_payload: dict[str, Any] = {"slug": slug}
+        if renamed and new_name is not None:
+            event_payload["old_name"] = row["name"]
+            event_payload["new_name"] = new_name
+        _emit_event(conn, "channel", str(row["id"]), event_type, event_payload)
         conn.commit()
         row = conn.execute("SELECT * FROM agora_channels WHERE slug = ?", (slug,)).fetchone()
         return {"channel": _channel_dict(row)}
@@ -2652,31 +2733,127 @@ def merge_channel(slug: str, payload: MergeChannelBody):
 
 @router.delete("/channels/{slug}")
 def delete_channel(slug: str):
-    """Delete a channel and all of its messages/threads.
+    """Delete a channel, migrating its content to ``praca`` first.
 
-    Default channels are protected. For a safer cleanup, prefer
-    ``POST /channels/{slug}/merge`` to move content to another channel.
+    Protected channels (``protected = 1``) cannot be deleted — returns 403.
+    All messages, threads, and notifications are moved to the ``praca``
+    channel before the channel row is removed, so nothing is lost.
+
+    Emits a ``channel.deleted`` event with the migration counts.
     """
-    if _is_default_channel(slug):
-        raise HTTPException(
-            status_code=400,
-            detail=f"default channel '{slug}' cannot be deleted",
-        )
-
     with _connect() as conn:
         row = conn.execute(
-            "SELECT id FROM agora_channels WHERE slug = ?", (slug,)
+            "SELECT * FROM agora_channels WHERE slug = ?", (slug,)
         ).fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail=f"channel '{slug}' not found")
+
+        if row["protected"]:
+            raise HTTPException(
+                status_code=403,
+                detail=f"channel '{slug}' is protected and cannot be deleted",
+            )
+
         channel_id = row["id"]
-        conn.execute("DELETE FROM agora_threads WHERE channel_id = ?", (channel_id,))
-        conn.execute("DELETE FROM agora_messages WHERE channel_id = ?", (channel_id,))
-        conn.execute("DELETE FROM agora_notifications WHERE channel_id = ?", (channel_id,))
+
+        # Migrate messages and threads to praca instead of deleting them.
+        target = conn.execute(
+            "SELECT id FROM agora_channels WHERE slug = ?", ("praca",)
+        ).fetchone()
+        if target is not None:
+            target_id = target["id"]
+            conn.execute(
+                "UPDATE agora_threads SET channel_id = ? WHERE channel_id = ?",
+                (target_id, channel_id),
+            )
+            moved_threads = conn.execute("SELECT changes()").fetchone()[0]
+            conn.execute(
+                "UPDATE agora_messages SET channel_id = ? WHERE channel_id = ?",
+                (target_id, channel_id),
+            )
+            moved_messages = conn.execute("SELECT changes()").fetchone()[0]
+            conn.execute(
+                "UPDATE agora_notifications SET channel_id = ? WHERE channel_id = ?",
+                (target_id, channel_id),
+            )
+        else:
+            moved_threads = 0
+            moved_messages = 0
+
         conn.execute("DELETE FROM agora_channels WHERE id = ?", (channel_id,))
-        _emit_event(conn, "channel", str(channel_id), "deleted", {"slug": slug})
+        _emit_event(
+            conn, "channel", str(channel_id), "deleted",
+            {
+                "slug": slug,
+                "moved_messages": moved_messages,
+                "moved_threads": moved_threads,
+                "target_slug": "praca",
+            },
+        )
         conn.commit()
-    return {"ok": True, "slug": slug}
+    return {
+        "ok": True,
+        "slug": slug,
+        "moved_messages": moved_messages,
+        "moved_threads": moved_threads,
+        "target_slug": "praca",
+    }
+
+
+@router.post("/channels/{slug}/pin")
+def pin_channel(slug: str):
+    """Pin a channel to the top of the channel list.
+
+    Sets ``pinned = 1`` on the channel identified by ``slug``. Emits a
+    ``channel.pinned`` event. Returns the updated channel object.
+
+    **Errors:**
+
+    * ``404`` — channel not found.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM agora_channels WHERE slug = ?", (slug,)
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"channel '{slug}' not found")
+        conn.execute(
+            "UPDATE agora_channels SET pinned = 1 WHERE id = ?", (row["id"],)
+        )
+        _emit_event(conn, "channel", str(row["id"]), "pinned", {"slug": slug})
+        conn.commit()
+        updated = conn.execute(
+            "SELECT * FROM agora_channels WHERE id = ?", (row["id"],)
+        ).fetchone()
+        return {"channel": _channel_dict(updated)}
+
+
+@router.post("/channels/{slug}/unpin")
+def unpin_channel(slug: str):
+    """Unpin a channel from the top of the channel list.
+
+    Sets ``pinned = 0`` on the channel identified by ``slug``. Emits a
+    ``channel.unpinned`` event. Returns the updated channel object.
+
+    **Errors:**
+
+    * ``404`` — channel not found.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM agora_channels WHERE slug = ?", (slug,)
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"channel '{slug}' not found")
+        conn.execute(
+            "UPDATE agora_channels SET pinned = 0 WHERE id = ?", (row["id"],)
+        )
+        _emit_event(conn, "channel", str(row["id"]), "unpinned", {"slug": slug})
+        conn.commit()
+        updated = conn.execute(
+            "SELECT * FROM agora_channels WHERE id = ?", (row["id"],)
+        ).fetchone()
+        return {"channel": _channel_dict(updated)}
 
 
 @router.post("/channels/prune-empty")
@@ -3608,6 +3785,40 @@ def po_watch_publish(board: str = "agora", stale_seconds: int = 900):
         )
         published = True
     return {"report": report, "published": published, "message": message}
+
+
+
+class QAReportBody(BaseModel):
+    task_id: str
+    title: str = ""
+    implementer: str | None = None
+    verdict: str = "FAIL"
+    details: str = ""
+    channel: str = "praca"
+
+
+@router.post("/qa/report")
+def qa_report(payload: QAReportBody):
+    """Post a structured QA PASS/FAIL mentioning the implementer."""
+    from agora.ops.flow_comms import format_qa_result
+
+    body = format_qa_result(
+        task_id=payload.task_id.strip(),
+        title=(payload.title or payload.task_id).strip(),
+        implementer=payload.implementer,
+        verdict=payload.verdict,
+        details=payload.details or "",
+    )
+    slug = (payload.channel or "praca").strip() or "praca"
+    return create_channel_message(
+        slug,
+        CreateMessageBody(
+            body=body,
+            author_type="agent",
+            author_profile="agent-qa",
+            linked_task_id=payload.task_id.strip(),
+        ),
+    )
 
 
 @router.get("/gates/complete/{task_id}")

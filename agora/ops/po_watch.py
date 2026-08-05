@@ -84,11 +84,20 @@ def inspect_board(board: str = "agora", *, stale_seconds: int = 900) -> dict[str
     lines = [f"[PO WATCH] board={board} healthy={healthy}"]
     if issues:
         lines.append("Gargalos: " + ", ".join(issues))
+        lines.append("@agent-techlead PO pede desbloqueio/orquestração dos itens abaixo.")
     for b in blocked[:8]:
-        lines.append(f"- BLOCKED {b.get('id')} @{b.get('assignee')}: {b.get('title')}")
-    for s in stale_runs[:8]:
+        who = b.get("assignee") or "unassigned"
+        mention = who if str(who).startswith("agent-") else who
         lines.append(
-            f"- STALE {s.get('id')} @{s.get('assignee')} pid={s.get('worker_pid')} hb={s.get('last_heartbeat_at')}: {s.get('title')}"
+            f"- BLOCKED {b.get('id')} @{mention}: {b.get('title')} "
+            f"(PO: iluminar; techlead: desbloquear)"
+        )
+    for s in stale_runs[:8]:
+        who = s.get("assignee") or "unassigned"
+        mention = who if str(who).startswith("agent-") else who
+        lines.append(
+            f"- STALE {s.get('id')} @{mention} pid={s.get('worker_pid')} "
+            f"hb={s.get('last_heartbeat_at')}: {s.get('title')}"
         )
     if healthy:
         lines.append("Board saudável — sem ação.")
