@@ -1,11 +1,12 @@
 import time
-from agora.db.repo import init_db, connect
+
+from agora.api.cost import cost_by_squad, cost_timeseries
 from agora.cost.rollup import rebuild_hour_rollups
-from agora.api.cost import cost_timeseries, cost_by_squad
+from agora.db.repo import connect, init_db
 
 
 def test_rollup_and_timeseries(tmp_path, monkeypatch):
-    import agora.db.repo as repo
+    from agora.db import repo
     db = init_db(tmp_path / "agora.db")
     monkeypatch.setattr(repo, "resolve_db_path", lambda: db)
     now = int(time.time())

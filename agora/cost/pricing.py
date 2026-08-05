@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from decimal import Decimal, ROUND_HALF_UP
-from typing import Any, Optional
+from decimal import ROUND_HALF_UP, Decimal
+from typing import Any
 
-MICRO = Decimal("1000000")
+MICRO = Decimal(1000000)
 
 
 def usd_to_micro(amount_usd: Any) -> int:
@@ -15,7 +15,7 @@ def usd_to_micro(amount_usd: Any) -> int:
         d = Decimal(str(amount_usd))
     except Exception:
         return 0
-    return int((d * MICRO).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    return int((d * MICRO).quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
 
 def micro_to_usd_str(micro: int) -> str:
@@ -23,14 +23,14 @@ def micro_to_usd_str(micro: int) -> str:
     return f"{d:.6f}"
 
 
-def _candidate_routes(model: str, provider: Optional[str]) -> list[tuple[str, Optional[str]]]:
+def _candidate_routes(model: str, provider: str | None) -> list[tuple[str, str | None]]:
     """Return (model, provider) candidates for pricing lookup."""
     raw_model = (model or "").strip()
     raw_provider = (provider or "").strip() or None
-    out: list[tuple[str, Optional[str]]] = []
-    seen: set[tuple[str, Optional[str]]] = set()
+    out: list[tuple[str, str | None]] = []
+    seen: set[tuple[str, str | None]] = set()
 
-    def add(m: str, p: Optional[str]) -> None:
+    def add(m: str, p: str | None) -> None:
         key = (m, p)
         if not m or key in seen:
             return
@@ -76,7 +76,7 @@ def _candidate_routes(model: str, provider: Optional[str]) -> list[tuple[str, Op
 def estimate_micro_cost(
     *,
     model: str,
-    provider: Optional[str] = None,
+    provider: str | None = None,
     input_tokens: int = 0,
     output_tokens: int = 0,
     cache_read_tokens: int = 0,
@@ -102,7 +102,7 @@ def estimate_micro_cost(
         reasoning_tokens=int(reasoning_tokens or 0),
     )
 
-    last_unknown: Optional[dict[str, Any]] = None
+    last_unknown: dict[str, Any] | None = None
     for cand_model, cand_provider in _candidate_routes(model, provider):
         try:
             result = estimate_usage_cost(cand_model, usage, provider=cand_provider)

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 try:
     import yaml  # type: ignore
@@ -17,7 +17,7 @@ except Exception:  # pragma: no cover
     yaml = None
 
 try:
-    from hermes_constants import get_hermes_home, get_default_hermes_root
+    from hermes_constants import get_default_hermes_root, get_hermes_home
 except Exception:  # pragma: no cover
     def get_hermes_home() -> Path:  # type: ignore
         return Path.home() / ".hermes"
@@ -113,7 +113,7 @@ def load_agora_config() -> dict[str, Any]:
     return cfg
 
 
-def roster_profiles(cfg: Optional[dict[str, Any]] = None) -> list[str]:
+def roster_profiles(cfg: dict[str, Any] | None = None) -> list[str]:
     cfg = cfg or load_agora_config()
     roster = cfg.get("roster") or {}
     if not isinstance(roster, dict):

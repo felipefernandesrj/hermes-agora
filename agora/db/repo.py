@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Generator, Optional
 
 from agora.config import db_path, load_agora_config
 from agora.db.schema import SCHEMA_SQL
@@ -34,14 +34,14 @@ _DEFAULT_CHANNELS = [
     },
 ]
 
-_db_init_path: Optional[Path] = None
+_db_init_path: Path | None = None
 
 
 def resolve_db_path() -> Path:
     return db_path()
 
 
-def init_db(path: Optional[Path] = None) -> Path:
+def init_db(path: Path | None = None) -> Path:
     """Create schema + seed default channels. Idempotent per resolved path."""
     global _db_init_path
     target = (path or resolve_db_path()).resolve()
@@ -119,7 +119,7 @@ def init_db(path: Optional[Path] = None) -> Path:
 
 
 @contextmanager
-def connect(path: Optional[Path] = None) -> Generator[sqlite3.Connection, None, None]:
+def connect(path: Path | None = None) -> Generator[sqlite3.Connection, None, None]:
     target = init_db(path)
     conn = sqlite3.connect(str(target), timeout=5.0)
     conn.row_factory = sqlite3.Row

@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from agora.config import load_agora_config, roster_profiles
 from agora.cost.pricing import estimate_micro_cost, usd_to_micro
@@ -26,7 +26,7 @@ def _profile_state_db(profile: str) -> Path:
     return home / "profiles" / profile / "state.db"
 
 
-def _open_ro(path: Path) -> Optional[sqlite3.Connection]:
+def _open_ro(path: Path) -> sqlite3.Connection | None:
     if not path.exists():
         return None
     uri = f"file:{path}?mode=ro"
@@ -83,7 +83,7 @@ def _has_table(conn: sqlite3.Connection, name: str) -> bool:
     return bool(row)
 
 
-def collect_once(*, profiles: Optional[list[str]] = None) -> dict[str, Any]:
+def collect_once(*, profiles: list[str] | None = None) -> dict[str, Any]:
     cfg = load_agora_config()
     squad = str(cfg.get("active_squad") or "")
     targets = profiles or roster_profiles(cfg)
@@ -119,8 +119,7 @@ def collect_once(*, profiles: Optional[list[str]] = None) -> dict[str, Any]:
                 max_seen = wm
                 for r in rows:
                     last = float(r["last_seen"] or r["first_seen"] or 0)
-                    if last > max_seen:
-                        max_seen = last
+                    max_seen = max(max_seen, last)
                     status = (r["cost_status"] or "unknown").strip() or "unknown"
                     amount = r["actual_cost_usd"]
                     if amount in (None, "", 0, 0.0):

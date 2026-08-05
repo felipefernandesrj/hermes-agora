@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from agora.db.repo import connect
 
@@ -16,7 +16,7 @@ except Exception:  # pragma: no cover
         return Path.home() / ".hermes"
 
 
-def rebuild_hour_rollups(*, since: Optional[int] = None) -> int:
+def rebuild_hour_rollups(*, since: int | None = None) -> int:
     """Rebuild hour buckets from agora_usage_events. Returns rows written."""
     if since is None:
         since = int(time.time()) - 7 * 86400
@@ -65,7 +65,7 @@ def rebuild_hour_rollups(*, since: Optional[int] = None) -> int:
         return written
 
 
-def _kanban_db_path() -> Optional[Path]:
+def _kanban_db_path() -> Path | None:
     home = get_hermes_home()
     candidates = [
         home / "kanban" / "boards" / "agora" / "kanban.db",

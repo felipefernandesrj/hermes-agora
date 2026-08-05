@@ -1,10 +1,9 @@
-from agora.config import load_agora_config, roster_profiles
-from agora.cost.pricing import usd_to_micro, micro_to_usd_str
-from agora.db.repo import init_db, connect
-from agora.api.health import build_health
+
 from agora.api.cost import cost_summary
-import os
-from pathlib import Path
+from agora.api.health import build_health
+from agora.config import load_agora_config, roster_profiles
+from agora.cost.pricing import micro_to_usd_str, usd_to_micro
+from agora.db.repo import connect, init_db
 
 
 def test_usd_micro_roundtrip():
@@ -31,7 +30,7 @@ def test_db_and_health(tmp_path, monkeypatch):
         # usage table exists
         conn.execute("select count(*) from agora_usage_events").fetchone()
     # health against custom db via monkeypatch of resolve path
-    import agora.db.repo as repo
+    from agora.db import repo
     monkeypatch.setattr(repo, "resolve_db_path", lambda: db)
     h = build_health()
     assert h["status"] in {"healthy", "degraded"}
@@ -42,7 +41,7 @@ def test_db_and_health(tmp_path, monkeypatch):
 
 def test_collector_noop(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    import agora.db.repo as repo
+    from agora.db import repo
     db = init_db(tmp_path / "agora.db")
     monkeypatch.setattr(repo, "resolve_db_path", lambda: db)
     from agora.cost.collector import collect_once

@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
 .venv/
 venv/
 node_modules/
@@ -9,4 +10,7 @@ node_modules/
 *.db
 *.db-journal
 .agora-*
+dist/
+build/
+*.egg-info/
 .github/workflows/
