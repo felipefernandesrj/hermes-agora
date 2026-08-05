@@ -23,6 +23,15 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+
+# Ensure standalone package root (parent of dashboard/) is importable when the
+# dashboard host loads plugin_api.py as a free module.
+try:
+    _AGORA_ROOT = Path(__file__).resolve().parents[1]
+    if str(_AGORA_ROOT) not in sys.path:
+        sys.path.insert(0, str(_AGORA_ROOT))
+except Exception:
+    pass
 import time
 import unicodedata
 from contextlib import contextmanager
@@ -57,6 +66,43 @@ except Exception as exc:  # pragma: no cover - Kanban may not be installed/enabl
     log.debug("Ágora could not import kanban_db: %s", exc)
 
 router = APIRouter()
+
+
+@router.get("/health")
+def agora_health():
+    """Plugin health + capability matrix (degrades, never 500s)."""
+    try:
+        from agora.api.health import build_health
+        return build_health()
+    except Exception as exc:  # pragma: no cover
+        return {
+            "status": "degraded",
+            "notes": [f"health failed: {type(exc).__name__}: {exc}"],
+            "capabilities": {},
+        }
+
+
+@router.get("/cost/summary")
+def agora_cost_summary(window: str = "24h"):
+    from agora.api.cost import cost_summary
+    return cost_summary(window)
+
+
+@router.get("/cost/by-profile")
+def agora_cost_by_profile(window: str = "24h"):
+    from agora.api.cost import cost_by_profile
+    return {"window": window, "profiles": cost_by_profile(window)}
+
+
+@router.post("/cost/collect")
+def agora_cost_collect():
+    """One-shot usage collector (safe to call periodically)."""
+    try:
+        from agora.cost.collector import collect_once
+        return collect_once()
+    except Exception as exc:
+        return {"inserted_events": 0, "errors": [f"{type(exc).__name__}: {exc}"]}
+
 
 # ---------------------------------------------------------------------------
 # Database helpers
@@ -228,7 +274,11 @@ def _connect() -> Generator[sqlite3.Connection, None, None]:
 
 
 def _db_path() -> Path:
-    return get_default_hermes_root() / "agora.db"
+    try:
+        from agora.db.repo import resolve_db_path
+        return resolve_db_path()
+    except Exception:
+        return get_default_hermes_root() / "agora.db"
 
 
 _db_init_path: Optional[Path] = None
