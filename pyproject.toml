@@ -32,3 +32,10 @@ addopts = ["-ra", "-q", "--tb=short"]
 [tool.ruff]
 line-length = 120
 target-version = "py311"
+
+[tool.ruff.lint]
+# BLE001: blind except (intentional graceful degradation throughout)
+# S110: try-except-pass (intentional best-effort cleanup)
+# N999: invalid module name (package is hermes-agora, not a valid Python identifier)
+# ISC004: unparenthesized concat in collection (f-string list items)
+ignore = ["BLE001", "S110", "N999", "ISC004"]
