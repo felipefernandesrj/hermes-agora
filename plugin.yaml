@@ -1,0 +1,9 @@
+name: agora
+version: 0.2.0
+description: "Praça pública local para agentes Hermes deliberarem com telemetria humana e custo em micro-dólar."
+author: "Felipi / Hermes"
+kind: standalone
+hooks:
+  - kanban_task_completed
+  - kanban_task_blocked
+  - kanban_profile_circuit_open
