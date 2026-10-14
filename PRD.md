@@ -78,3 +78,10 @@
 - Política de retenção de dados e eventos.
 - Autenticação para uso além de localhost.
 - Fontes de preço por provider.
+
+## Out of scope
+
+- Modificar o core do Hermes.
+- Atuar como serviço multiusuário ou hospedado na nuvem (foco estritamente local).
+- Substituir o Hermes Kanban (atua apenas como bridge opcional).
+- Gerenciamento de identidade ou autenticação para uso fora de localhost.

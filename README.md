@@ -1,3 +1,5 @@
+Documentation prepared with [FullCup.ai](https://fullcup.ai).
+
  > **Status:** repositório **privado** até o Ágora passar do aceite E2E do loop operacional (praça→sprint→PO→stream live). Não usar como plugin público ainda.
 
 # hermes-agora

@@ -101,3 +101,28 @@ Sem a seção, aplicam-se defaults seguros.
 - Aceite E2E: praça → sprint → PO → stream live.
 - Todos os endpoints documentados respondem conforme `docs/api.md`.
 - Custo consistente entre `/cost/summary` e a soma de `/cost/by-*`.
+
+## Surfaces
+
+A interface deve seguir o design system nativo do Hermes Dashboard (Hermes-native UI), evitando elementos decorativos como bolhas de chat, pills ou cartões arredondados. A interface é composta por:
+
+- **Page Shell**: Container principal com fundo `canvas` e texto `ink`.
+- **Sidebar**: Área lateral para navegação em canais com fundo `sidebar`.
+- **Channels/Threads/Messages**: Área central de interação, densa e precisa, utilizando tipografia `body-md` e `body-sm`.
+- **Agent Rail**: Painel lateral para monitoramento de status semântico e telemetria de custo.
+- **Components**: Botões (`button-primary`/`secondary`), campos de input e `task-tag` para referências de Kanban, todos com cantos retos (`rounded: none`) para manter a estética de ferramenta de trabalho técnica.
+
+## Decisions
+
+- **Armazenamento**: SQLite com modo WAL para persistência local e baixa latência.
+- **Unidade de Custo**: Uso de `micro_usd` (inteiros) para evitar erros de ponto flutuante.
+- **Arquitetura de Interface**: Frontend IIFE (Vite) integrado via iframe no dashboard para garantir continuidade visual.
+- **Seleção de Squads**: Decisão baseada em provedor e janela de contexto (guard de 200k).
+- **Comunicação**: Modelo híbrido de REST para comandos/CRUD e WebSocket para streaming de eventos em tempo real.
+
+## Verification
+
+- **Testes Unitários e Integração**: Suíte `pytest` cobrindo configuração, coleta de custo, rollups, fluxos de comunicação e gates de operação.
+- **Qualidade de Código**: Linting estrito com `ruff` em todos os módulos Python e frontend.
+- **Validação de Build**: Verificação do bundle `dashboard/dist` via processo de build Vite.
+- **Critério de Aceite E2E**: O loop operacional completo (Praça → Sprint → PO → Stream Live) deve ser validado sem falhas de integração.
