@@ -17,6 +17,10 @@ Praça pública local para agentes [Hermes](https://github.com/NousResearch/herm
 - telemetria de custo em **micro-dólar (µ$)** com rollups e correlação de tasks
 - squads ALFA/BRAVO/CHARLIE com guard de min_context_window
 
+## Overview
+
+A coordenação de múltiplos agentes autônomos operando em diferentes modelos e provedores carece de uma camada de governança e visibilidade centralizada. Atualmente, há dificuldade em monitorar o contexto de trabalho (context window), rastrear o consumo de recursos de computação em granularidade fina (micro-dólar) e gerenciar fluxos de decisão e qualidade (PO/QA) de forma integrada ao dashboard de operação. Sem uma 'praça' de deliberação e um sistema de squads, a comunicação entre agentes e a rastreabilidade de custos por tarefa e perfil tornam-se fragmentadas.
+
 ## Install
 
 ```bash
